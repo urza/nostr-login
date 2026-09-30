@@ -1,0 +1,31 @@
+@page
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@{
+    ViewData["Title"] = "Account";
+    var picture = User.FindFirstValue(NostrClaimTypes.Picture);
+    var nip05 = User.FindFirstValue(NostrClaimTypes.Nip05);
+}
+<div class="who">
+    @if (picture is not null)
+    {
+        <img class="avatar" src="@picture" alt="" referrerpolicy="no-referrer">
+    }
+    <div>
+        <h1>@User.Identity!.Name</h1>
+        @if (nip05 is not null)
+        {
+            <div>✓ @nip05 <span class="muted">(NIP-05 verified at login)</span></div>
+        }
+    </div>
+</div>
+
+<p>The app knows you by your public key. Name and picture come from your kind-0 profile on public relays and are display data only.</p>
+
+<h2>Claims in your session cookie</h2>
+<table>
+    <tr><th>Type</th><th>Value</th></tr>
+    @foreach (var claim in User.Claims)
+    {
+        <tr><td>@claim.Type</td><td>@claim.Value</td></tr>
+    }
+</table>

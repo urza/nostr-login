@@ -1,0 +1,43 @@
+@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Home";
+}
+<h1>Nostr as an ASP.NET Core Identity login</h1>
+<p>
+    This is the standard <code>dotnet new webapp --auth Individual</code> template with one added line:
+    <code>AddAuthentication().AddNostr()</code>. Nostr works like any external login provider.
+</p>
+
+@if (Model.Logins is null)
+{
+    <ul>
+        <li><a asp-area="Identity" asp-page="/Account/Login">Log in</a> and choose <strong>Nostr</strong>. A new key gets a new account with no password and no email.</li>
+        <li>Or <a asp-area="Identity" asp-page="/Account/Register">register with email and password</a>, then link a Nostr key under <em>Manage account › External logins</em>.</li>
+    </ul>
+}
+else
+{
+    <h2 class="h4 mt-4">Your account</h2>
+    <table class="table">
+        <tr><th>User name</th><td>@User.Identity?.Name</td></tr>
+        <tr><th>Password</th><td>@(Model.HasPassword ? "set" : "none")</td></tr>
+        @foreach (var login in Model.Logins)
+        {
+            <tr>
+                <th>@login.ProviderDisplayName login</th>
+                <td style="word-break: break-all">
+                    @if (login.LoginProvider == NostrAuth.Authentication.NostrLoginDefaults.AuthenticationScheme)
+                    {
+                        @NostrAuth.Nip19.ToNpub(login.ProviderKey)<br><small class="text-muted">hex: @login.ProviderKey</small>
+                    }
+                    else
+                    {
+                        @login.ProviderKey
+                    }
+                </td>
+            </tr>
+        }
+    </table>
+    <p><a asp-area="Identity" asp-page="/Account/Manage/ExternalLogins">Link or remove logins</a></p>
+}

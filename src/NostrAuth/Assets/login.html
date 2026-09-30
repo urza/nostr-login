@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Log in with Nostr · {{title}}</title>
+<style>
+  :root {
+    --bg: #f6f5f9; --card: #fff; --text: #1d1b22; --muted: #67626f; --border: #e3e0ea;
+    --accent: #7b3fe4; --accent-text: #fff; --error-bg: #fdecec; --error: #a4161a; --code: #f0eef5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141218; --card: #1e1b24; --text: #ece9f1; --muted: #a39dad; --border: #332e3b;
+      --accent: #a27bf0; --accent-text: #141218; --error-bg: #3a1618; --error: #ff9a9e; --code: #2a2632;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 30rem; margin: 3rem auto; padding: 0 1rem; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; }
+  h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
+  .sub { color: var(--muted); margin: 0 0 1.25rem; }
+  .method { border-top: 1px solid var(--border); padding: 1rem 0; }
+  .method:first-of-type { border-top: 0; padding-top: 0; }
+  .method h2 { font-size: 1rem; margin: 0 0 .25rem; }
+  .method p { margin: 0 0 .75rem; color: var(--muted); font-size: .92rem; }
+  button { font: inherit; border: 0; border-radius: 8px; padding: .6rem 1rem; background: var(--accent); color: var(--accent-text); cursor: pointer; width: 100%; }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--border); width: auto; padding: .35rem .75rem; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .qr { display: flex; justify-content: center; background: #fff; border-radius: 8px; padding: .5rem; margin: .5rem 0; }
+  .qr svg { width: 100%; max-width: 260px; height: auto; }
+  code, textarea, pre { font: .8rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  pre, .uri { background: var(--code); border-radius: 6px; padding: .5rem; overflow-x: auto; white-space: pre-wrap; word-break: break-all; margin: .5rem 0; }
+  textarea { width: 100%; min-height: 7rem; background: var(--code); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: .5rem; margin: .5rem 0; }
+  .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  .status { font-size: .9rem; color: var(--muted); }
+  .error { background: var(--error-bg); color: var(--error); border-radius: 8px; padding: .6rem .8rem; margin-bottom: 1rem; }
+  .binding { font-size: .8rem; color: var(--muted); margin-top: 1rem; }
+  .binding strong { overflow-wrap: anywhere; }
+  summary { cursor: pointer; font-weight: 600; }
+  a { color: var(--accent); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1>Log in to {{title}}</h1>
+    <p class="sub">Prove that you own a Nostr key. Your private key stays in your signer.</p>
+
+    <div id="error" class="error" role="alert" hidden></div>
+
+    <section class="method">
+      <h2>Browser extension</h2>
+      <p id="ext-hint">Alby, nos2x, Flamingo, Keys.band or another NIP-07 extension.</p>
+      <button id="ext-btn" type="button">Sign in with extension</button>
+    </section>
+
+    <section class="method" id="connect-section" hidden>
+      <h2>Signer app</h2>
+      <p>Scan with Amber, nsec.app or another NIP-46 signer, then approve the request.</p>
+      <button id="connect-btn" type="button">Show QR code</button>
+      <div id="connect-box" hidden>
+        <div class="qr" id="connect-qr"></div>
+        <div class="row">
+          <a id="connect-open" href="#">Open signer app</a>
+          <button id="connect-copy" type="button" class="secondary">Copy link</button>
+        </div>
+        <p class="status" id="connect-status" aria-live="polite"></p>
+        <p class="status" id="connect-auth" hidden>Your signer asks for approval: <a id="connect-auth-link" target="_blank" rel="noopener noreferrer">open it here</a>.</p>
+      </div>
+    </section>
+
+    <section class="method" id="manual-section" hidden>
+      <details>
+        <summary>Sign manually</summary>
+        <p>Sign this event with any tool, for example <code>nak</code>, and paste the signed JSON below.</p>
+        <pre id="manual-cmd"></pre>
+        <textarea id="manual-event" placeholder='{"id": "...", "pubkey": "...", "sig": "...", ...}'></textarea>
+        <button id="manual-btn" type="button">Log in with this event</button>
+      </details>
+    </section>
+
+    <p class="binding">You sign a login for <strong id="binding-url"></strong>. Only sign it if this address is in your browser's address bar.</p>
+  </div>
+
+  <form id="login-form" method="post" hidden>
+    <input type="hidden" name="state">
+    <input type="hidden" name="event">
+  </form>
+</main>
+
+<script id="nostr-config" type="application/json">{{config}}</script>
+<script>
+(() => {
+  const cfg = JSON.parse(document.getElementById('nostr-config').textContent);
+  const $ = id => document.getElementById(id);
+
+  $('binding-url').textContent = cfg.url;
+
+  const showError = msg => { $('error').textContent = msg; $('error').hidden = false; };
+
+  // The event that proves key control. The server checks every tag.
+  // u + method follow NIP-98; challenge makes it single-use.
+  const template = () => ({
+    kind: cfg.kind,
+    created_at: Math.floor(Date.now() / 1000),
+    content: '',
+    tags: [['u', cfg.url], ['method', 'POST'], ['challenge', cfg.challenge]],
+  });
+
+  // A normal form POST, not fetch: the browser then follows the redirect and stores the cookie.
+  const submit = signed => {
+    const form = $('login-form');
+    form.action = cfg.url;
+    form.state.value = cfg.state;
+    form.event.value = typeof signed === 'string' ? signed : JSON.stringify(signed);
+    form.submit();
+  };
+
+  // --- NIP-07 browser extension -------------------------------------------------------
+  // Extensions inject window.nostr at document_end or a little later, so wait a moment.
+  const waitForExtension = async () => {
+    for (let i = 0; i < 20 && !window.nostr; i++) await new Promise(r => setTimeout(r, 100));
+    return window.nostr;
+  };
+  waitForExtension().then(nostr => {
+    if (!nostr) {
+      $('ext-btn').disabled = true;
+      $('ext-hint').textContent = 'No NIP-07 extension found in this browser.';
+    }
+  });
+  $('ext-btn').addEventListener('click', async () => {
+    $('ext-btn').disabled = true;
+    try {
+      submit(await window.nostr.signEvent(template()));
+    } catch (e) {
+      showError('The extension did not sign: ' + (e && e.message ? e.message : e));
+      $('ext-btn').disabled = false;
+    }
+  });
+
+  // --- NIP-46 remote signer, driven by the server -------------------------------------
+  if (cfg.connectPath) {
+    $('connect-section').hidden = false;
+    $('connect-btn').addEventListener('click', async () => {
+      $('connect-btn').disabled = true;
+      const res = await fetch(cfg.connectPath, { method: 'POST', body: new URLSearchParams({ state: cfg.state }) });
+      if (!res.ok) {
+        showError(res.status === 503 ? 'Too many logins at the moment. Try again in a minute.' : 'Could not start Nostr Connect.');
+        $('connect-btn').disabled = false;
+        return;
+      }
+      const session = await res.json();
+      $('connect-btn').hidden = true;
+      $('connect-box').hidden = false;
+      // The SVG comes from our own server (QRCoder), not from user input.
+      $('connect-qr').innerHTML = session.qrSvg;
+      $('connect-open').href = session.uri;
+      $('connect-copy').addEventListener('click', () => navigator.clipboard.writeText(session.uri));
+      poll(session.id);
+    });
+  }
+
+  const statusText = {
+    WaitingForSigner: 'Waiting for your signer app to connect…',
+    WaitingForSignature: 'Connected. Approve the login in your signer app…',
+  };
+  const poll = async id => {
+    const res = await fetch(cfg.connectPath + '/' + encodeURIComponent(id), { cache: 'no-store' });
+    if (!res.ok) { showError('The Nostr Connect session is gone. Reload the page.'); return; }
+    const s = await res.json();
+    if (s.status === 'Signed') { $('connect-status').textContent = 'Signed. Logging in…'; submit(s.event); return; }
+    if (s.status === 'Failed') { showError(s.error || 'Nostr Connect failed.'); return; }
+    $('connect-status').textContent = statusText[s.status] || s.status;
+    if (s.authUrl && /^https:\/\//i.test(s.authUrl)) {
+      $('connect-auth-link').href = s.authUrl;
+      $('connect-auth').hidden = false;
+    }
+    setTimeout(() => poll(id), 1500);
+  };
+
+  // --- Manual signing ------------------------------------------------------------------
+  if (cfg.manual) {
+    $('manual-section').hidden = false;
+    const q = s => "'" + s.replace(/'/g, "'\\''") + "'";
+    $('manual-cmd').textContent =
+      `nak event -k ${cfg.kind} -c '' -t u=${q(cfg.url)} -t method=POST -t challenge=${q(cfg.challenge)} --sec <your nsec>`;
+    $('manual-btn').addEventListener('click', () => {
+      const text = $('manual-event').value.trim();
+      try { JSON.parse(text); } catch { showError('That is not valid JSON.'); return; }
+      submit(text);
+    });
+  }
+})();
+</script>
+</body>
+</html>

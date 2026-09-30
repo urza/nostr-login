@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>@ViewData["Title"] · Cookie login demo</title>
+    <style>
+        :root { --bg: #fafafa; --card: #fff; --text: #1d1b22; --muted: #67626f; --border: #e3e0ea; --accent: #7b3fe4; --code: #f0eef5; }
+        @@media (prefers-color-scheme: dark) {
+            :root { --bg: #141218; --card: #1e1b24; --text: #ece9f1; --muted: #a39dad; --border: #332e3b; --accent: #a27bf0; --code: #2a2632; }
+        }
+        body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 system-ui, sans-serif; }
+        header { border-bottom: 1px solid var(--border); background: var(--card); }
+        header div, main { max-width: 46rem; margin: 0 auto; padding: .75rem 1rem; }
+        header div { display: flex; gap: 1rem; align-items: center; }
+        header strong { margin-right: auto; }
+        a { color: var(--accent); }
+        .button { display: inline-block; background: var(--accent); color: #fff; padding: .55rem 1rem; border-radius: 8px; text-decoration: none; border: 0; font: inherit; cursor: pointer; }
+        .link { background: none; border: 0; color: var(--accent); font: inherit; cursor: pointer; padding: 0; text-decoration: underline; }
+        table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+        td, th { text-align: left; border-bottom: 1px solid var(--border); padding: .4rem .5rem; vertical-align: top; }
+        code, td { word-break: break-all; }
+        code { background: var(--code); padding: 0 .25rem; border-radius: 4px; }
+        .avatar { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; }
+        .who { display: flex; gap: 1rem; align-items: center; }
+        .muted { color: var(--muted); }
+    </style>
+</head>
+<body>
+<header>
+    <div>
+        <strong><a href="/">Cookie login demo</a></strong>
+        @if (User.Identity?.IsAuthenticated == true)
+        {
+            <a href="/account">@User.Identity.Name</a>
+            <form method="post" asp-page="/Logout"><button class="link">Log out</button></form>
+        }
+        else
+        {
+            <a class="button" href="/login">Log in with Nostr</a>
+        }
+    </div>
+</header>
+<main>
+    @RenderBody()
+</main>
+</body>
+</html>

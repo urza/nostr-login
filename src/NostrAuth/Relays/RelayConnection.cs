@@ -1,0 +1,138 @@
+using System.Net.WebSockets;
+using System.Text.Json;
+using System.Threading.Channels;
+
+namespace NostrAuth.Relays;
+
+/// <summary>
+/// One WebSocket connection to one relay. Deliberately minimal: a login needs a short-lived
+/// subscription and a few publishes, not reconnects or a relay pool with outbox logic.
+/// </summary>
+public sealed class RelayConnection : IAsyncDisposable
+{
+    private const int MaxMessageBytes = 1024 * 1024;
+    private readonly ClientWebSocket _socket = new();
+    private readonly Channel<JsonElement[]> _incoming = Channel.CreateUnbounded<JsonElement[]>();
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
+    private readonly CancellationTokenSource _cts = new();
+    private Task? _receiveLoop;
+
+    private RelayConnection(Uri url) => Url = url;
+
+    public Uri Url { get; }
+
+    /// <summary>Relay messages (<c>["EVENT", ...]</c>, <c>["EOSE", ...]</c>, <c>["OK", ...]</c> and so on) in arrival order.</summary>
+    public ChannelReader<JsonElement[]> Messages => _incoming.Reader;
+
+    public static async Task<RelayConnection> ConnectAsync(string url, CancellationToken ct)
+    {
+        var relay = new RelayConnection(new Uri(url));
+        try
+        {
+            await relay._socket.ConnectAsync(relay.Url, ct);
+        }
+        catch
+        {
+            await relay.DisposeAsync();
+            throw;
+        }
+        relay._receiveLoop = relay.ReceiveLoopAsync();
+        return relay;
+    }
+
+    public Task SubscribeAsync(string subscriptionId, object filter, CancellationToken ct) =>
+        SendAsync(["REQ", subscriptionId, filter], ct);
+
+    public Task PublishAsync(NostrEvent evt, CancellationToken ct) => SendAsync(["EVENT", evt], ct);
+
+    public async Task SendAsync(object[] message, CancellationToken ct)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(message);
+        await _sendLock.WaitAsync(ct);
+        try
+        {
+            await _socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
+    private async Task ReceiveLoopAsync()
+    {
+        var buffer = new byte[64 * 1024];
+        using var message = new MemoryStream();
+        try
+        {
+            while (_socket.State == WebSocketState.Open && !_cts.IsCancellationRequested)
+            {
+                var result = await _socket.ReceiveAsync(buffer, _cts.Token);
+                if (result.MessageType == WebSocketMessageType.Close) break;
+                message.Write(buffer, 0, result.Count);
+                // A relay is untrusted. One endless message must not eat the server's memory.
+                if (message.Length > MaxMessageBytes) break;
+                if (!result.EndOfMessage) continue;
+
+                var parsed = TryParse(message.GetBuffer().AsSpan(0, (int)message.Length));
+                message.SetLength(0);
+                if (parsed is not null) _incoming.Writer.TryWrite(parsed);
+            }
+        }
+        catch (Exception e) when (e is OperationCanceledException or WebSocketException)
+        {
+            // Relay went away or we closed it. The reader sees the completed channel.
+        }
+        finally
+        {
+            _incoming.Writer.TryComplete();
+        }
+    }
+
+    private static JsonElement[]? TryParse(ReadOnlySpan<byte> utf8)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(utf8.ToArray());
+            return doc.RootElement.ValueKind == JsonValueKind.Array
+                ? doc.RootElement.EnumerateArray().Select(e => e.Clone()).ToArray()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Reads the event from an <c>["EVENT", subId, event]</c> message, or returns null.</summary>
+    public static NostrEvent? GetEvent(JsonElement[] message, string subscriptionId) =>
+        message is [{ ValueKind: JsonValueKind.String } type, { ValueKind: JsonValueKind.String } sub, var evt]
+        && type.GetString() == "EVENT" && sub.GetString() == subscriptionId
+            ? NostrEvent.TryParse(evt.GetRawText())
+            : null;
+
+    public static bool IsEose(JsonElement[] message, string subscriptionId) =>
+        message is [{ ValueKind: JsonValueKind.String } type, { ValueKind: JsonValueKind.String } sub, ..]
+        && type.GetString() == "EOSE" && sub.GetString() == subscriptionId;
+
+    public async ValueTask DisposeAsync()
+    {
+        _cts.Cancel();
+        if (_socket.State == WebSocketState.Open)
+        {
+            try
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                await _socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, null, timeout.Token);
+            }
+            catch (Exception e) when (e is OperationCanceledException or WebSocketException)
+            {
+                // Best effort. The relay drops the connection on its own anyway.
+            }
+        }
+        if (_receiveLoop is not null) await _receiveLoop;
+        _socket.Dispose();
+        _cts.Dispose();
+        _sendLock.Dispose();
+    }
+}

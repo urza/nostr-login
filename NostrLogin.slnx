@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/Demo.CookieLogin/Demo.CookieLogin.csproj" />
+    <Project Path="samples/Demo.IdentityLink/Demo.IdentityLink.csproj" />
+    <Project Path="samples/Demo.NostrApi.Client/Demo.NostrApi.Client.csproj" />
+    <Project Path="samples/Demo.NostrApi/Demo.NostrApi.csproj" />
+    <Project Path="samples/Demo.OidcClient/Demo.OidcClient.csproj" />
+    <Project Path="samples/Demo.OidcProvider/Demo.OidcProvider.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/NostrAuth/NostrAuth.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/NostrAuth.Tests/NostrAuth.Tests.csproj" />
+  </Folder>
+</Solution>

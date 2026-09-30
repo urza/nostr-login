@@ -1,0 +1,20 @@
+@page
+@{
+    ViewData["Title"] = "Home";
+}
+<h1>Log in with Nostr</h1>
+<p>This app is not a Nostr client. It uses your Nostr key only as your identity.</p>
+<ol>
+    <li>The server makes a single-use challenge.</li>
+    <li>Your signer (browser extension, phone app or <code>nak</code>) signs a small event that names this site and the challenge.</li>
+    <li>The server checks the signature and gives you a normal session cookie. Your pubkey is your user id.</li>
+</ol>
+@if (User.Identity?.IsAuthenticated == true)
+{
+    <p>You are logged in. <a href="/account">See your account</a>.</p>
+}
+else
+{
+    <p><a class="button" href="/login">Log in with Nostr</a></p>
+    <p class="muted">Or open <a href="/account">/account</a> directly. It needs a login, so it sends you to the login page.</p>
+}

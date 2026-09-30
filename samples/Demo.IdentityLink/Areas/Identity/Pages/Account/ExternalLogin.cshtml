@@ -1,0 +1,45 @@
+@page
+@model ExternalLoginModel
+@{
+    ViewData["Title"] = "New account";
+}
+
+<h1>New account</h1>
+
+<div class="d-flex gap-3 align-items-center my-3">
+    @if (Model.Picture is not null)
+    {
+        <img src="@Model.Picture" alt="" width="56" height="56" class="rounded-circle" style="object-fit: cover" referrerpolicy="no-referrer">
+    }
+    <div>
+        <div class="fw-bold">@Model.DisplayName</div>
+        @if (Model.Npub is not null)
+        {
+            <small class="text-muted" style="word-break: break-all">@Model.Npub</small>
+        }
+    </div>
+</div>
+
+<p>
+    This @Model.ProviderDisplayName key is not linked to an account yet. Create a new account for it,
+    or <a asp-page="./Login" asp-route-returnUrl="@Model.ReturnUrl">log in with your password</a> first
+    and link the key under <em>Manage account › External logins</em>.
+</p>
+
+<div class="row">
+    <div class="col-md-6">
+        <form asp-page-handler="Confirmation" asp-route-returnUrl="@Model.ReturnUrl" method="post">
+            <div asp-validation-summary="ModelOnly" class="text-danger" role="alert"></div>
+            <div class="form-floating mb-3">
+                <input asp-for="Input.Email" class="form-control" autocomplete="email" placeholder="you@example.com" />
+                <label asp-for="Input.Email" class="form-label"></label>
+                <span asp-validation-for="Input.Email" class="text-danger"></span>
+            </div>
+            <button type="submit" class="w-100 btn btn-lg btn-primary">Create account</button>
+        </form>
+    </div>
+</div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}

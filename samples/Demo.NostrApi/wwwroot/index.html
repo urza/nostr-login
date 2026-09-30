@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NIP-98 API demo</title>
+<style>
+  :root { --bg: #fafafa; --card: #fff; --text: #1d1b22; --muted: #67626f; --border: #e3e0ea; --accent: #7b3fe4; --code: #f0eef5; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141218; --card: #1e1b24; --text: #ece9f1; --muted: #a39dad; --border: #332e3b; --accent: #a27bf0; --code: #2a2632; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 system-ui, sans-serif; }
+  main { max-width: 46rem; margin: 0 auto; padding: 1rem; }
+  button { font: inherit; border: 0; border-radius: 8px; padding: .5rem 1rem; background: var(--accent); color: #fff; cursor: pointer; }
+  input { font: inherit; padding: .45rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--text); width: 100%; box-sizing: border-box; }
+  pre { background: var(--code); padding: .75rem; border-radius: 8px; white-space: pre-wrap; word-break: break-all; font-size: .8rem; }
+  .row { display: flex; gap: .5rem; margin: .5rem 0; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>NIP-98 API demo</h1>
+  <p>
+    Each API call below is signed on its own by your NIP-07 extension. The server checks the URL,
+    the method, the time and (for POST) the SHA-256 of the body. There is no session.
+  </p>
+  <p class="muted">Most extensions ask you to approve each signature, unless you allow kind 27235 for this site.
+    This is why NIP-98 fits API clients and bots better than normal browsing.</p>
+
+  <div class="row"><button id="me">GET /api/me</button><button id="list">GET /api/notes</button></div>
+  <div class="row"><input id="text" placeholder="A short note" maxlength="280"><button id="add">POST /api/notes</button></div>
+
+  <h2>Last request</h2>
+  <pre id="out">(nothing yet)</pre>
+</main>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+
+  const sha256Hex = async bytes =>
+    [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('');
+
+  // Sign a kind 27235 event for exactly this request and send it in the Authorization header.
+  async function nip98Fetch(path, method = 'GET', json) {
+    if (!window.nostr) throw new Error('No NIP-07 extension found.');
+    const url = new URL(path, location.origin).href;
+    const body = json === undefined ? undefined : new TextEncoder().encode(JSON.stringify(json));
+    const tags = [['u', url], ['method', method]];
+    if (body) tags.push(['payload', await sha256Hex(body)]);
+    const signed = await window.nostr.signEvent({ kind: 27235, created_at: Math.floor(Date.now() / 1000), content: '', tags });
+    // btoa needs Latin-1; the event JSON can contain any Unicode, so encode to UTF-8 first.
+    const header = 'Nostr ' + btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(signed))));
+    const res = await fetch(url, { method, body, headers: { Authorization: header, ...(body ? { 'Content-Type': 'application/json' } : {}) } });
+    return { status: res.status, body: await res.text(), signed };
+  }
+
+  const show = async p => {
+    try {
+      const r = await p;
+      $('out').textContent = `HTTP ${r.status}\n${r.body}\n\nSigned event:\n${JSON.stringify(r.signed, null, 2)}`;
+    } catch (e) {
+      $('out').textContent = 'Error: ' + (e.message || e);
+    }
+  };
+
+  $('me').onclick = () => show(nip98Fetch('/api/me'));
+  $('list').onclick = () => show(nip98Fetch('/api/notes'));
+  $('add').onclick = () => show(nip98Fetch('/api/notes', 'POST', { text: $('text').value }));
+})();
+</script>
+</body>
+</html>

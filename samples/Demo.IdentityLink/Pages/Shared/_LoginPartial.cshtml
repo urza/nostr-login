@@ -1,0 +1,35 @@
+﻿@using Microsoft.AspNetCore.Identity
+@inject SignInManager<IdentityUser> SignInManager
+@inject UserManager<IdentityUser> UserManager
+
+<ul class="navbar-nav">
+@if (SignInManager.IsSignedIn(User))
+{
+    // Nostr profile data, stored as user claims at each Nostr login (see ExternalLogin.cshtml.cs).
+    var displayName = User.FindFirst(NostrAuth.Authentication.NostrClaimTypes.Name)?.Value ?? User.Identity?.Name;
+    var picture = User.FindFirst(NostrAuth.Authentication.NostrClaimTypes.Picture)?.Value;
+    <li class="nav-item">
+        <a class="nav-link text-dark d-flex align-items-center gap-2" asp-area="Identity" asp-page="/Account/Manage/Index" title="Manage">
+            @if (picture is not null)
+            {
+                <img src="@picture" alt="" width="28" height="28" class="rounded-circle" style="object-fit: cover" referrerpolicy="no-referrer">
+            }
+            Hello @displayName!
+        </a>
+    </li>
+    <li class="nav-item">
+        <form class="form-inline" asp-area="Identity" asp-page="/Account/Logout" asp-route-returnUrl="@Url.Page("/Index", new { area = "" })">
+            <button  type="submit" class="nav-link btn btn-link text-dark">Logout</button>
+        </form>
+    </li>
+}
+else
+{
+    <li class="nav-item">
+        <a class="nav-link text-dark" asp-area="Identity" asp-page="/Account/Register">Register</a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link text-dark" asp-area="Identity" asp-page="/Account/Login">Login</a>
+    </li>
+}
+</ul>

@@ -1,0 +1,15 @@
+{
+  "name": "nostr-login-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Browser tests for the demo apps. A fake NIP-07 extension signs with a throwaway key.",
+  "scripts": {
+    "cookie": "node cookie-login.mjs",
+    "identity": "node identity-link.mjs",
+    "oidc": "node oidc.mjs"
+  },
+  "devDependencies": {
+    "nostr-tools": "^2.25.2",
+    "playwright": "^1.63.0"
+  }
+}

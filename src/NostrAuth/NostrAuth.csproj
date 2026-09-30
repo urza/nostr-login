@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Description>Log in to ASP.NET Core apps with a Nostr key (NIP-07, NIP-46, NIP-98).</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="NBitcoin.Secp256k1" Version="4.0.1" />
+    <!-- NIP-44 needs raw ChaCha20. .NET has only the ChaCha20-Poly1305 AEAD. -->
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
+    <PackageReference Include="QRCoder" Version="1.8.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\**" />
+    <InternalsVisibleTo Include="NostrAuth.Tests" />
+  </ItemGroup>
+
+</Project>
