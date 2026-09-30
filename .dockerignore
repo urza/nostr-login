@@ -1,0 +1,10 @@
+# Only src/NostrAuth and app/NostrGuestbook are needed to build the image.
+**/bin/
+**/obj/
+**/guestbook-data/
+**/node_modules/
+.git/
+.claude-memory/
+tests/
+samples/
+docs/

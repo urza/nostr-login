@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/app/">
+    <Project Path="app/NostrGuestbook/NostrGuestbook.csproj" />
+  </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/Demo.CookieLogin/Demo.CookieLogin.csproj" />
     <Project Path="samples/Demo.IdentityLink/Demo.IdentityLink.csproj" />

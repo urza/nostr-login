@@ -494,3 +494,6 @@ tests/e2e/out/
 CLAUDE_FIRST_RUN.md
 aspell-spellcheck.md
 statusline.sh
+
+# Guestbook data folder (database and Data Protection keys) when run from source
+app/NostrGuestbook/guestbook-data/

@@ -1,0 +1,141 @@
+@page
+@model IndexModel
+@{
+    var p = Model.MyProfile;
+    var fetching = p?.Status is ProfileStatus.Queued or ProfileStatus.Fetching;
+}
+
+@if (Model.MyPubKey is null)
+{
+    <section class="hero">
+        <svg class="hero-graph" viewBox="0 0 400 260" aria-hidden="true">
+            <g class="edges">
+                <line x1="40" y1="200" x2="130" y2="90"/><line x1="130" y1="90" x2="250" y2="60"/>
+                <line x1="250" y1="60" x2="360" y2="140"/><line x1="130" y1="90" x2="210" y2="180"/>
+                <line x1="210" y1="180" x2="360" y2="140"/><line x1="40" y1="200" x2="210" y2="180"/>
+                <line x1="250" y1="60" x2="210" y2="180"/>
+            </g>
+            <g class="nodes">
+                <circle cx="40" cy="200" r="7"/><circle cx="130" cy="90" r="9" class="pulse"/>
+                <circle cx="250" cy="60" r="6"/><circle cx="360" cy="140" r="8" class="pulse delay"/>
+                <circle cx="210" cy="180" r="11" class="key"/>
+            </g>
+        </svg>
+        <p class="eyebrow">A guestbook with no passwords</p>
+        <h1>Sign the wall with your <span class="grad">Nostr key</span></h1>
+        <p class="lead">
+            Log in by signing a one-time challenge with your Nostr signer. No email, no password,
+            no account form. Then leave one public message. It is yours to edit any time.
+        </p>
+        <a class="btn" href="/login">Log in with Nostr</a>
+        <ul class="chips">
+            <li>Browser extension (Alby, nos2x)</li>
+            <li>Signer app via QR (Primal, Amber)</li>
+            <li>Key never leaves your signer</li>
+        </ul>
+    </section>
+}
+else
+{
+    <section id="me" class="card me-card">
+        <div class="me-head" data-author="@Model.MyPubKey">
+            <partial name="_Avatar" model="(Model.MyPubKey, p?.Picture, 72)" />
+            <div class="me-id">
+                <h1 class="author-name">@(p?.Name ?? Display.ShortNpub(Model.MyPubKey))</h1>
+                <p class="npub">
+                    <code>@Display.ShortNpub(Model.MyPubKey)</code>
+                    <button type="button" class="link small" data-copy="@Display.Npub(Model.MyPubKey)">copy npub</button>
+                </p>
+                <p class="nip05" id="me-nip05" @(p?.Nip05Verified == true ? "" : "hidden")>✓ <span>@p?.Nip05</span></p>
+            </div>
+        </div>
+
+        <div class="profile-panel" id="profile-panel" data-done="@(fetching ? "false" : "true")">
+            <div class="profile-panel-head">
+                <span class="spinner" aria-hidden="true"></span>
+                <strong id="profile-title">
+                    @(fetching ? "Fetching your profile…" : p?.Status == ProfileStatus.Found ? "Profile loaded" : "No profile found")
+                </strong>
+                <form method="post" asp-page-handler="Refresh" class="refresh"><button class="link small">refresh</button></form>
+            </div>
+            <p class="muted small" id="profile-text">
+                @if (fetching)
+                {
+                    <text>You are logged in. The server now asks public relays for your Nostr profile (a kind-0 event with your name and picture) and checks your NIP-05 address. This is display data only: your identity is your key.</text>
+                }
+                else if (p?.Status == ProfileStatus.Found)
+                {
+                    <text>Name and picture come from your Nostr profile, loaded @(p.FetchedAt is { } f ? Display.Utc(f) : "earlier"). They update at each login.</text>
+                }
+                else
+                {
+                    <text>No relay had a profile for your key. You appear with your npub and a generated avatar. Set a name and picture in any Nostr app, then refresh.</text>
+                }
+            </p>
+            <ul class="steps" id="profile-steps"></ul>
+        </div>
+
+        <form method="post" asp-page-handler="Save" class="editor">
+            <label for="text">@(Model.MyMessage is null ? "Your message for the wall" : "Your message (you can have one, edit it any time)")</label>
+            <textarea id="text" name="Text" maxlength="@Message.MaxLength" rows="3" placeholder="Say hello to the other signers…" required>@Model.Text</textarea>
+            <div class="editor-foot">
+                <span class="muted small"><span id="counter">0</span> / @Message.MaxLength</span>
+                <span asp-validation-for="Text" class="error small"></span>
+                @if (Model.Notice is not null)
+                {
+                    <span class="notice small">@Model.Notice</span>
+                }
+                <span class="spacer"></span>
+                @if (Model.MyMessage is not null)
+                {
+                    <button class="btn btn-ghost" asp-page-handler="Delete" formnovalidate>Delete</button>
+                }
+                <button class="btn">@(Model.MyMessage is null ? "Post message" : "Update message")</button>
+            </div>
+        </form>
+    </section>
+}
+
+<section class="wall">
+    <div class="wall-head">
+        <h2>The wall</h2>
+        <span class="muted">@Model.TotalMessages @(Model.TotalMessages == 1 ? "message" : "messages")@(Model.TotalMessages > IndexModel.WallSize ? $", newest {IndexModel.WallSize} shown" : "")</span>
+    </div>
+
+    @if (Model.Wall.Count == 0)
+    {
+        <p class="empty">No messages yet. Be the first to sign the wall.</p>
+    }
+
+    <div class="grid">
+        @foreach (var e in Model.Wall)
+        {
+            var key = e.Message.PubKey;
+            <article class="msg @(key == Model.MyPubKey ? "mine" : "")" data-author="@key">
+                <header>
+                    <partial name="_Avatar" model="(key, e.Author?.Picture, 40)" />
+                    <div class="who">
+                        <span class="author-name">@(e.Author?.Name ?? Display.ShortNpub(key))</span>
+                        @if (e.Author is { Nip05Verified: true, Nip05: { } nip05 })
+                        {
+                            <span class="nip05 small" title="NIP-05 verified">✓ @nip05</span>
+                        }
+                        else if (e.Author?.Name is not null)
+                        {
+                            @* Only under a real name: without one, the name line already is the short npub. *@
+                            <span class="muted small">@Display.ShortNpub(key)</span>
+                        }
+                    </div>
+                </header>
+                <p class="text">@e.Message.Text</p>
+                <footer class="muted small">
+                    <time datetime="@Display.Iso(e.Message.UpdatedAt)">@Display.Utc(e.Message.UpdatedAt)</time>
+                    @if (e.Message.UpdatedAt > e.Message.CreatedAt)
+                    {
+                        <span>· edited</span>
+                    }
+                </footer>
+            </article>
+        }
+    </div>
+</section>

@@ -4,6 +4,7 @@
   "type": "module",
   "description": "Browser tests for the demo apps. A fake NIP-07 extension signs with a throwaway key.",
   "scripts": {
+    "guestbook": "node guestbook.mjs",
     "cookie": "node cookie-login.mjs",
     "identity": "node identity-link.mjs",
     "oidc": "node oidc.mjs"

@@ -1,0 +1,9 @@
+@model (string PubKey, string? Picture, int Size)
+@* One avatar markup for the whole app, so site.js can swap in the picture when the profile arrives. *@
+<span class="avatar" style="width:@(Model.Size)px;height:@(Model.Size)px;@Display.AvatarGradient(Model.PubKey)">
+    @if (Model.Picture is not null)
+    {
+        @* no-referrer: the image host does not learn which page shows the picture. *@
+        <img src="@Model.Picture" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">
+    }
+</span>

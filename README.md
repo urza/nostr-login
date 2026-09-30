@@ -1,12 +1,28 @@
 # Log in with Nostr for ASP.NET Core
 
-Research and demo apps for Nostr as a login and identity layer in .NET web apps.
+Use a Nostr key as the login for any .NET web app. The app does not need to be a Nostr client.
+The user proves control of their key by signing a small, single-use event. The app checks the
+signature and uses the public key as the user's identity. There are no passwords, no email
+addresses, and no private keys on the server.
 
-The apps are not Nostr clients. The user proves control of a Nostr key by signing a small, single-use event. The app verifies the signature and uses the public key as the user's identity. After that, the app uses normal ASP.NET Core cookies and Identity.
+This repository contains:
 
-- Research, design decisions and findings: [docs/research.md](docs/research.md)
-- Shared library: [src/NostrAuth](src/NostrAuth)
-- Demos: [samples](samples)
+| Part | What it is |
+|---|---|
+| [**Nostr Guestbook**](#nostr-guestbook) | A complete example app: log in with Nostr, leave one public message. Runs with one `docker run`. |
+| [`src/NostrAuth`](src/NostrAuth) | The library: `AddAuthentication().AddNostr()`, like `AddGoogle()`, plus NIP-98 for APIs. |
+| [`samples/`](samples) | Five small demos: cookie login, ASP.NET Core Identity, NIP-98 API, OpenID Connect provider and client. |
+| [`docs/research.md`](docs/research.md) | Research: the relevant NIPs, design decisions, signer apps (including iPhone), security notes. |
+
+![Nostr Guestbook wall](docs/images/guestbook-wall.png)
+
+## Quick start
+
+```bash
+docker run -d -p 8080:8080 -v nostr-guestbook:/data ghcr.io/urza/nostr-login
+```
+
+Open <http://localhost:8080> and click **Log in with Nostr**.
 
 ## How the login works
 
@@ -15,69 +31,83 @@ sequenceDiagram
     participant B as Browser
     participant S as Signer (extension, phone app, nak)
     participant A as ASP.NET Core app
-    B->>A: GET /account (not logged in)
+    B->>A: GET /login
     A->>B: 302 to /signin-nostr?state=... (state holds a single-use challenge)
     B->>S: sign kind 27235 {u: https://app/signin-nostr, method: POST, challenge}
     S->>B: signed event
     B->>A: POST /signin-nostr (state + signed event)
     A->>A: check id, BIP-340 signature, kind, time, u, method, challenge (single use)
-    A->>B: 302 to /account + session cookie (NameIdentifier = hex pubkey)
+    A->>B: 302 + session cookie (user id = hex pubkey)
 ```
 
-The login page offers three signer channels:
+The login page offers three ways to sign:
 
-| Channel | For whom |
-|---|---|
-| Browser extension (NIP-07) | Desktop users with Alby, nos2x, Flamingo, Keys.band or similar. |
-| Signer app (NIP-46, QR code) | Users with Amber (Android), nsec.app or another remote signer. The server does the NIP-46 part, so the page needs no Nostr JavaScript library. |
-| Sign manually | Developers and CLI users. The page shows a ready `nak event ...` command. |
-
-## Demos
-
-| Demo | Port | What it shows |
+| Way | For whom | Tested with |
 |---|---|---|
-| [Demo.CookieLogin](samples/Demo.CookieLogin) | 5101 | The smallest app. No database: the pubkey is the user id in a cookie. Shows the claims, the kind-0 profile name and picture, and a verified NIP-05 handle. |
-| [Demo.IdentityLink](samples/Demo.IdentityLink) | 5102 | The standard `webapp --auth Individual` template (Identity + SQLite) plus one line: `AddAuthentication().AddNostr()`. Sign up with Nostr only, or link a Nostr key to a password account under *Manage account › External logins*. |
-| [Demo.NostrApi](samples/Demo.NostrApi) | 5103 | An API with NIP-98 HTTP Auth: every request carries its own signed event. Has a browser page and a console client ([Demo.NostrApi.Client](samples/Demo.NostrApi.Client)). |
-| [Demo.OidcProvider](samples/Demo.OidcProvider) | 5104 | "Nostr ID": an OpenID Connect provider (OpenIddict) where users log in with Nostr. The `sub` claim is the hex pubkey. |
-| [Demo.OidcClient](samples/Demo.OidcClient) | 5105 | A normal app with `AddOpenIdConnect()`. It has no Nostr code at all. Start Demo.OidcProvider first. |
+| Browser extension (NIP-07) | Desktop browsers with Alby, nos2x, Flamingo, Keys.band, or Nostash on iPhone Safari | nos2x |
+| Signer app (NIP-46, QR code) | Primal, Amber, nsec.app, Clave and other remote signers. The server does the NIP-46 part, so the page needs no Nostr JavaScript library. | Primal (iPhone), `nak bunker` |
+| Sign manually | Developers. The page shows a ready `nak event ...` command. | `nak` |
 
-### Run a demo
+## Nostr Guestbook
 
-You need the [.NET 10 SDK](https://dotnet.microsoft.com/download).
+A small, complete app on top of the library ([`app/NostrGuestbook`](app/NostrGuestbook)).
 
-```bash
-dotnet run --project samples/Demo.CookieLogin      # http://localhost:5101
-dotnet run --project samples/Demo.IdentityLink     # http://localhost:5102
-dotnet run --project samples/Demo.NostrApi         # http://localhost:5103
-dotnet run --project samples/Demo.NostrApi.Client  # console client for 5103
-dotnet run --project samples/Demo.OidcProvider     # http://localhost:5104
-dotnet run --project samples/Demo.OidcClient       # http://localhost:5105
-```
+![Logged in](docs/images/guestbook-logged-in.png)
 
-If the app runs behind a proxy or port forward with another host name, set the public origin. The signed event must name the exact URL that the user sees:
+- **Fast login.** The user signs, and the app lets them in at once. Name and picture load in the background afterwards. A panel shows each step: which relays the app asks, what each relay answers, and the NIP-05 check.
+- **One message per user.** Each Nostr key can have one public message. The user can edit or delete it at any time, also on later visits. The pubkey is the database key, so a second message is not possible.
+- **Public wall.** Everyone sees all messages with names and avatars, without login. Users without a Nostr profile get a generated avatar.
+- **Dark and light theme**, phone and desktop layouts.
+- **Small footprint.** SQLite, one container, non-root user, images for amd64 and arm64.
+
+### Run with Docker
 
 ```bash
-Nostr__PublicOrigin=https://demo.example.com dotnet run --project samples/Demo.CookieLogin
+docker run -d --name nostr-guestbook -p 8080:8080 -v nostr-guestbook:/data ghcr.io/urza/nostr-login
 ```
 
-Demo 1 can also use other NIP-46 relays, for example your own:
+The volume `/data` holds the database and the keys that encrypt login cookies. Keep it: without it, a new container has no messages and all users must log in again.
+
+On a real domain, run it behind a reverse proxy with HTTPS and set the public address. The signed login event must name the exact address that the user sees in the browser:
 
 ```bash
-Nostr__NostrConnectRelays__0=wss://relay.example.com dotnet run --project samples/Demo.CookieLogin
+docker run -d --name nostr-guestbook -p 127.0.0.1:8080:8080 -v nostr-guestbook:/data \
+  -e Nostr__PublicOrigin=https://guestbook.example.com \
+  -e ASPNETCORE_FORWARDEDHEADERS_ENABLED=true \
+  ghcr.io/urza/nostr-login
 ```
 
-### Log in without a browser extension
+### Configuration
 
-[nak](https://github.com/fiatjaf/nak) can play both signer roles:
+All settings are environment variables. Lists use `__0`, `__1` and so on.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `Nostr__PublicOrigin` | request scheme and host | Public address, for example `https://guestbook.example.com`. Needed behind a proxy that changes the host or scheme. |
+| `ASPNETCORE_FORWARDEDHEADERS_ENABLED` | `false` | Set `true` behind a reverse proxy, so the app sees the real client IP (for rate limits) and scheme. |
+| `Nostr__NostrConnectRelays__0`, `__1`, ... | `relay.nsec.app`, `relay.damus.io`, `nos.lol` | Relays for the QR-code login. The QR code lists only the relays that the server could reach, in this order. |
+| `Nostr__ProfileRelays__0`, `__1`, ... | `purplepag.es`, `relay.primal.net`, `relay.damus.io`, `nos.lol` | Relays for names and pictures. |
+| `Guestbook__DataDirectory` | `/data` in Docker | Folder for the database and the cookie keys. |
+| `ASPNETCORE_HTTP_PORTS` | `8080` | Port inside the container. |
+
+### Build from source
 
 ```bash
-nak key generate                                   # a throwaway secret key (hex)
-# "Sign manually": copy the command from the login page, put your key in place of <your nsec>.
-# "Signer app": run a bunker once, then give it the nostrconnect:// link from the login page.
-nak bunker --persist --profile demo --sec <hex key> wss://nos.lol
-nak bunker connect --profile demo 'nostrconnect://...'
+dotnet run --project app/NostrGuestbook        # http://localhost:5110, data in app/NostrGuestbook/guestbook-data
+docker build -t nostr-guestbook .              # the same image as the published one
 ```
+
+### Publishing
+
+[`.github/workflows/docker.yml`](.github/workflows/docker.yml) runs on each push to `main`:
+
+1. It runs the tests.
+2. It builds the image for `linux/amd64` and `linux/arm64`.
+3. It pushes `ghcr.io/urza/nostr-login:latest` and `:sha-<commit>`.
+
+A tag like `v1.2.0` also publishes `:1.2.0` and `:1.2`. Pull requests only build.
+
+A new GitHub package is private. After the first run, open the package settings on GitHub and set the visibility to **Public**, so `docker run` works without `docker login`.
 
 ## Use the library in your app
 
@@ -95,7 +125,7 @@ builder.Services.AddAuthentication(o =>
     });
 ```
 
-`AddNostr()` is a normal remote authentication scheme, like `AddGoogle()`. With ASP.NET Core Identity it appears as an external login with no extra code (see Demo 2 for the one page override that makes email optional).
+`AddNostr()` is a normal remote authentication scheme. The login page comes with it (`/signin-nostr`). With ASP.NET Core Identity, Nostr appears as an external login with no extra code (see [Demo.IdentityLink](samples/Demo.IdentityLink)).
 
 Claims after login:
 
@@ -108,7 +138,9 @@ Claims after login:
 | `nostr:picture` | Profile picture URL (http/https only). Display only. |
 | `nostr:nip05` | Present only if the NIP-05 handle resolved to this key at login time. |
 
-For APIs, add NIP-98:
+Names, pictures and NIP-05 handles are display data: the user can change them at any time. Never use them as the account key.
+
+For APIs, add NIP-98 (each request carries its own signed event):
 
 ```csharp
 builder.Services.AddAuthentication().AddNostrHttpAuth();
@@ -124,41 +156,64 @@ Main options of `AddNostr()`:
 | `PublicOrigin` | request scheme and host | Set it behind a proxy. |
 | `NostrConnectRelays` | `relay.nsec.app`, `relay.damus.io`, `nos.lol` | Empty list turns the QR code option off. Use your own relay if you can. |
 | `MaxNostrConnectSessions` | 100 | Active NIP-46 sessions per instance. |
-| `ProfileRelays` | `purplepag.es`, `relay.primal.net`, `relay.damus.io`, `nos.lol` | Empty list turns the profile lookup off (faster login, no outbound calls). |
+| `ProfileRelays` | `purplepag.es`, `relay.primal.net`, `relay.damus.io`, `nos.lol` | Empty list turns the profile lookup during login off. |
 | `AllowManualEvent` | `true` | The "Sign manually" box. |
 | `MaxEventAge` / `MaxFutureSkew` | 5 min / 1 min | Time window for `created_at`. |
+
+## Demos
+
+| Demo | Port | What it shows |
+|---|---|---|
+| [Demo.CookieLogin](samples/Demo.CookieLogin) | 5101 | The smallest app. No database: the pubkey is the user id in a cookie. |
+| [Demo.IdentityLink](samples/Demo.IdentityLink) | 5102 | The standard `webapp --auth Individual` template plus one line. Sign up with Nostr only, or link a Nostr key to a password account. |
+| [Demo.NostrApi](samples/Demo.NostrApi) | 5103 | An API with NIP-98 HTTP Auth, with a browser page and a console client. |
+| [Demo.OidcProvider](samples/Demo.OidcProvider) | 5104 | "Nostr ID": an OpenID Connect provider where users log in with Nostr. |
+| [Demo.OidcClient](samples/Demo.OidcClient) | 5105 | A normal app with `AddOpenIdConnect()` and no Nostr code at all. Start Demo.OidcProvider first. |
+
+```bash
+dotnet run --project samples/Demo.CookieLogin      # http://localhost:5101
+```
 
 ## Tests
 
 ```bash
-dotnet test                       # 62 tests: crypto vectors, validation rules, full login flows, NIP-98
+dotnet test tests/NostrAuth.Tests
 ```
 
-- NIP-44 is checked against the [official test vectors](https://github.com/paulmillr/nip44). Event ids are checked against events from public relays and against events signed by nostr-tools and nak.
-- If [nak](https://github.com/fiatjaf/nak) is on the `PATH` (or in `~/.local/bin`), the tests also run a local relay (`nak serve`) and a NIP-46 signer (`nak bunker`), and do a full QR-code login through them. Without nak these tests are skipped.
+- NIP-44 is checked against the [official test vectors](https://github.com/paulmillr/nip44). Event ids are checked against events from public relays and events signed by nostr-tools and nak.
+- The login flow tests cover replay, phishing-style URL changes, login CSRF, old events and NIP-98 body checks.
+- If [nak](https://github.com/fiatjaf/nak) is on the `PATH` (or in `~/.local/bin`), the tests also run a local relay and a NIP-46 signer, and do a full QR-code login. Without nak, these tests are skipped.
 
-Browser tests (Playwright, Chromium) run against the running demos. A fake NIP-07 extension signs with a throwaway key:
+Browser tests (Playwright) run against running apps. A fake NIP-07 extension signs with a throwaway key:
 
 ```bash
 cd tests/e2e
 npm install
 npx playwright install chromium
-node cookie-login.mjs     # Demo 1 (also runs the "Sign manually" flow with nak, if installed)
-node identity-link.mjs    # Demo 2: sign up, link to a password account, reject a key of another account
+# Guestbook: start it with the test profile relay first (the script starts nak on port 10555)
+#   Nostr__ProfileRelays__0=ws://127.0.0.1:10555 dotnet run --project app/NostrGuestbook
+node guestbook.mjs
+node cookie-login.mjs     # Demo 1
+node identity-link.mjs    # Demo 2
 node api.mjs              # Demo 3
-node oidc.mjs             # Demo 4: login, single sign-on, logout
+node oidc.mjs             # Demo 4
 ```
 
-### What is not tested yet
+## Security notes
 
-- Real browser extensions (Alby, nos2x). The browser tests use a fake `window.nostr` with the same API.
-- Real signer apps other than Primal. Primal for iPhone (3.5.x, "Remote Login") logged in to Demo 1 through the QR code on 2026-09-30. Amber, nsec.app and Clave are not tested. The NIP-46 tests use `nak bunker`. One full QR login with `nak bunker` also ran over the public relay `nos.lol` (about 2 seconds). From the test machine `relay.nsec.app` did not answer and `relay.damus.io` sometimes returned 503, which is why the defaults list three relays.
+- **The private key never reaches the server.** A stolen database holds only public keys.
+- **Each login event is valid once**, for a few minutes, and only for this site's login URL.
+- **Not phishing-proof.** A live phishing site can ask the user to sign a login for the real site and forward it. Passkeys block this, because the browser adds the real origin; no Nostr signer does this yet. Users must check the site name in their signer's prompt. Details: [docs/research.md, section 8](docs/research.md#8-security-notes).
+- **No key recovery.** A lost Nostr key cannot be reset. Apps with valuable accounts should offer a second login method.
+- **Profile lookups call out.** The server connects to public relays and to NIP-05 domains. NIP-05 requests to private and loopback addresses are blocked.
+
+### Before production
+
+- HTTPS everywhere.
+- On more than one instance: a shared `IChallengeStore` (for example Redis), a shared Data Protection key ring, and a shared NIP-98 replay cache.
+- Your own relay for NIP-46, if you can.
+
+### Not tested yet
+
+- Signer apps other than Primal (Amber, nsec.app, Clave) and extensions other than nos2x.
 - A successful NIP-05 check against a real domain. Only the failure path is tested.
-
-## Before production
-
-- HTTPS everywhere. The demos use plain http for local use.
-- A shared `IChallengeStore` (for example Redis) and a shared Data Protection key ring when the app runs on more than one instance. The NIP-98 replay cache (`IMemoryCache`) also needs a shared store then.
-- Real signing and encryption certificates for the OIDC provider, and a real client secret.
-- Rate limits on `/signin-nostr/connect`.
-- Account recovery: a lost Nostr key cannot be reset. Offer a second login method.

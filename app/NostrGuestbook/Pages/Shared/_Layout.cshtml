@@ -1,0 +1,59 @@
+@inject GuestbookDb Db
+@{
+    var myKey = User.FindFirstValue(NostrClaimTypes.PubKey);
+    var me = myKey is null ? null : await Db.Profiles.FindAsync(myKey);
+}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <title>@(ViewData["Title"] is string t ? $"{t} · " : "")Nostr Guestbook</title>
+    <meta name="description" content="Log in with your Nostr key and leave one public message.">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%238e30eb'/%3E%3Cg stroke='white' stroke-width='2' fill='white'%3E%3Cpath d='M9 22 16 10 23 20' fill='none'/%3E%3Ccircle cx='9' cy='22' r='2.5'/%3E%3Ccircle cx='16' cy='10' r='2.5'/%3E%3Ccircle cx='23' cy='20' r='2.5'/%3E%3C/g%3E%3C/svg%3E">
+    <link rel="stylesheet" href="~/site.css">
+</head>
+<body>
+<header class="topbar">
+    <div class="wrap topbar-inner">
+        <a class="brand" href="/">
+            <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+                <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a45cff"/><stop offset="1" stop-color="#d14fe0"/></linearGradient></defs>
+                <rect width="32" height="32" rx="8" fill="url(#lg)"/>
+                <g stroke="#fff" stroke-width="2" fill="#fff"><path d="M9 22 16 10 23 20" fill="none"/><circle cx="9" cy="22" r="2.5"/><circle cx="16" cy="10" r="2.5"/><circle cx="23" cy="20" r="2.5"/></g>
+            </svg>
+            <span>Nostr Guestbook</span>
+        </a>
+        <nav class="topbar-nav">
+            @if (myKey is not null)
+            {
+                <a class="me-chip" href="/#me" data-author="@myKey">
+                    <partial name="_Avatar" model="(myKey, me?.Picture, 28)" />
+                    <span class="author-name">@(me?.Name ?? Display.ShortNpub(myKey))</span>
+                </a>
+                <form method="post" asp-page="/Index" asp-page-handler="Logout"><button class="link">Log out</button></form>
+            }
+            else
+            {
+                <a class="btn btn-small" href="/login">Log in with Nostr</a>
+            }
+        </nav>
+    </div>
+</header>
+
+<main class="wrap">
+    @RenderBody()
+</main>
+
+<footer class="wrap footer">
+    <p>
+        Your private key never leaves your signer. The site only checks a signature.
+        Built with <strong>NostrAuth</strong> for ASP.NET Core ·
+        <a href="https://github.com/urza/nostr-login">Source on GitHub</a>
+    </p>
+</footer>
+
+<script src="~/site.js"></script>
+</body>
+</html>
