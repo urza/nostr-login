@@ -178,8 +178,10 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
                 var key = conversationKey ?? Nip44.ConversationKey(clientKey, evt.PubKey);
                 if (TryReadReply(evt.Content, key) is not { } reply)
                 {
-                    logger.LogInformation("Nostr Connect {Id}: cannot decrypt a reply from {PubKey} (NIP-04 signer: {Nip04})",
-                        session.Id, evt.PubKey, evt.Content.Contains("?iv="));
+                    // NIP-46 requires NIP-44. A signer that still answers with NIP-04 ("?iv=" in the
+                    // content) can never complete this login; say so now instead of a 5-minute wait.
+                    if (evt.Content.Contains("?iv=")) throw new InvalidOperationException("Your signer app uses old NIP-04 encryption, which NIP-46 no longer allows. Update the signer app.");
+                    logger.LogInformation("Nostr Connect {Id}: cannot decrypt a reply from {PubKey}", session.Id, evt.PubKey);
                     continue;
                 }
                 logger.LogDebug("Nostr Connect {Id}: reply from {PubKey}, id {ReplyId}, result length {Length}, error '{Error}'",
@@ -191,6 +193,10 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
                     // differ from the user's key (new Amber makes one per connection).
                     if (reply.Result != secret)
                     {
+                        // "ack" is the connect reply of the old NIP-46 text. It does not prove that the
+                        // signer read our QR code, so this login cannot go on. Other values are ignored
+                        // (a wrong guess from a third party must not end the session).
+                        if (reply.Result == "ack") throw new InvalidOperationException("Your signer app did not return the connection secret (old NIP-46). Update the signer app.");
                         // Do not log the whole result: it may be our secret with a small change.
                         logger.LogInformation("Nostr Connect {Id}: connect reply without our secret (result starts '{Start}')",
                             session.Id, reply.Result?[..Math.Min(4, reply.Result.Length)]);

@@ -89,7 +89,10 @@ public sealed class NostrLoginHandler(
         }
         await LoginPage.WriteAsync(Context, Options.AppName, new
         {
+            // url is the public URL for the u tag. path is where the form posts: relative, so the
+            // POST goes to the address in the browser even when the server sees another scheme or host.
             url = CallbackUrl,
+            path = $"{OriginalPathBase}{Options.CallbackPath}",
             state = Request.Query["state"].ToString(),
             challenge,
             kind = Nip98.Kind,

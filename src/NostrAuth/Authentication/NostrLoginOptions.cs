@@ -79,6 +79,17 @@ public class NostrLoginOptions : RemoteAuthenticationOptions
     }
 
     public ISecureDataFormat<AuthenticationProperties> StateDataFormat { get; set; } = default!;
+
+    public override void Validate()
+    {
+        base.Validate();
+        // "app.example.com" without a scheme would still pass the login: the u tag and its check use
+        // the same string. But the signer would show a strange address, and the login page could not
+        // compare it with the browser address. Fail at the first request with a clear message instead.
+        if (!string.IsNullOrWhiteSpace(PublicOrigin)
+            && !(Uri.TryCreate(PublicOrigin, UriKind.Absolute, out var origin) && origin.Scheme is "http" or "https"))
+            throw new InvalidOperationException($"{nameof(PublicOrigin)} must be an absolute http(s) URL such as https://app.example.com, not '{PublicOrigin}'.");
+    }
 }
 
 public class NostrLoginEvents : RemoteAuthenticationEvents

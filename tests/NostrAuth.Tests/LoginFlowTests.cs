@@ -108,13 +108,25 @@ public class LoginFlowTests
     }
 
     [Fact]
-    public async Task Public_origin_is_used_for_the_url_tag()
+    public async Task Public_origin_is_used_for_the_url_tag_but_the_form_posts_to_a_relative_path()
     {
         await using var app = await TestApp.StartAsync(o => o.PublicOrigin = "https://app.example.com");
         var browser = app.NewBrowser();
         var page = await browser.OpenLoginPageAsync();
         Assert.Equal("https://app.example.com/signin-nostr", page.Url);
+        // The browser here talks to http://localhost, like a browser behind a TLS proxy talks to a
+        // different scheme than the app sees. The POST must still land on this app.
+        Assert.Equal("/signin-nostr", page.Path);
         Assert.Equal(HttpStatusCode.Redirect, (await browser.SubmitAsync(page, page.Template().Sign(User))).StatusCode);
+    }
+
+    [Fact]
+    public async Task Public_origin_without_a_scheme_is_rejected()
+    {
+        // A typo in Nostr__PublicOrigin. Options are validated when the first request resolves them.
+        await using var app = await TestApp.StartAsync(o => o.PublicOrigin = "app.example.com");
+        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => app.NewBrowser().GetAsync("/me"));
+        Assert.Contains("PublicOrigin", e.Message);
     }
 }
 

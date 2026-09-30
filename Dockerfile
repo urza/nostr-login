@@ -34,6 +34,13 @@ ENV Guestbook__DataDirectory=/data
 COPY --from=build --chown=1654:1654 /data /data
 VOLUME /data
 
+# The normal setup is a reverse proxy that ends TLS and talks plain http to this container. Without
+# forwarded headers the app sees "http", and the login URL in the QR code and in the signed event
+# says http:// while the user is on https://. This trusts X-Forwarded-For and X-Forwarded-Proto from
+# any client, so publish the port to localhost or a private network only. Set it to false when the
+# container is reachable directly.
+ENV ASPNETCORE_FORWARDEDHEADERS_ENABLED=true
+
 COPY --from=build /out .
 # The base image's non-root user.
 USER $APP_UID

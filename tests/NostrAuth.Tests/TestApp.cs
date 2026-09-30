@@ -91,12 +91,12 @@ internal sealed partial class TestApp : IAsyncDisposable
             return JsonSerializer.Deserialize<LoginPageConfig>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
         }
 
-        /// <summary>What the page's JavaScript does after the signer returns the event.</summary>
+        /// <summary>What the page's JavaScript does after the signer returns the event: a POST to the relative path.</summary>
         public Task<HttpResponseMessage> SubmitAsync(LoginPageConfig page, NostrEvent signed) =>
-            PostFormAsync(new Uri(page.Url).PathAndQuery, new() { ["state"] = page.State, ["event"] = signed.ToJson() });
+            PostFormAsync(page.Path, new() { ["state"] = page.State, ["event"] = signed.ToJson() });
     }
 
-    internal sealed record LoginPageConfig(string Url, string State, string Challenge, int Kind, string? ConnectPath, bool Manual)
+    internal sealed record LoginPageConfig(string Url, string Path, string State, string Challenge, int Kind, string? ConnectPath, bool Manual)
     {
         public NostrEvent Template(DateTimeOffset? at = null) =>
             Nip98.CreateTemplate(Url, "POST", at ?? DateTimeOffset.UtcNow, Challenge);

@@ -9,11 +9,13 @@
   :root {
     --bg: #f6f5f9; --card: #fff; --text: #1d1b22; --muted: #67626f; --border: #e3e0ea;
     --accent: #7b3fe4; --accent-text: #fff; --error-bg: #fdecec; --error: #a4161a; --code: #f0eef5;
+    --notice-bg: #fff4d6; --notice: #6b4a00;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #141218; --card: #1e1b24; --text: #ece9f1; --muted: #a39dad; --border: #332e3b;
       --accent: #a27bf0; --accent-text: #141218; --error-bg: #3a1618; --error: #ff9a9e; --code: #2a2632;
+      --notice-bg: #3a2f10; --notice: #ffd77a;
     }
   }
   * { box-sizing: border-box; }
@@ -42,6 +44,7 @@
   .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
   .status { font-size: .9rem; color: var(--muted); }
   .error { background: var(--error-bg); color: var(--error); border-radius: 8px; padding: .6rem .8rem; margin-bottom: 1rem; }
+  .notice { background: var(--notice-bg); color: var(--notice); border-radius: 8px; padding: .6rem .8rem; margin-bottom: 1rem; font-size: .92rem; overflow-wrap: anywhere; }
   .binding { font-size: .8rem; color: var(--muted); margin-top: 1rem; }
   .binding strong { overflow-wrap: anywhere; }
   summary { cursor: pointer; font-weight: 600; }
@@ -56,6 +59,7 @@
     <p class="sub">Prove that you own a Nostr key. Your private key stays in your signer.</p>
 
     <div id="error" class="error" role="alert" hidden></div>
+    <div id="notice" class="notice" hidden></div>
 
     <section class="method">
       <h2>Browser extension</h2>
@@ -108,6 +112,17 @@
 
   const showError = msg => { $('error').textContent = msg; $('error').hidden = false; };
 
+  // The server cannot see the address in the browser. A public address that differs from it is
+  // the usual reason for a broken login behind a reverse proxy (PublicOrigin not set, forwarded
+  // headers off), so the page says so instead of failing in silence. The login still works: the
+  // form posts to a relative path, and the server checks the u tag against its own cfg.url.
+  const expectedOrigin = new URL(cfg.url).origin;
+  if (location.origin !== expectedOrigin) {
+    $('notice').textContent = `This page is open at ${location.origin}, but the app is set up for ${expectedOrigin}. `
+      + 'Your signer shows the second address. The site operator should set the public address (PublicOrigin) or turn forwarded headers on.';
+    $('notice').hidden = false;
+  }
+
   // The event that proves key control. The server checks every tag.
   // u + method follow NIP-98; challenge makes it single-use.
   const template = () => ({
@@ -118,9 +133,15 @@
   });
 
   // A normal form POST, not fetch: the browser then follows the redirect and stores the cookie.
+  // The action is a relative path on purpose. cfg.url is the public URL as the server knows it;
+  // behind a TLS proxy without forwarded headers that is http://, while this page is https://.
+  // An absolute http:// action then makes Chrome warn "the information you're about to submit
+  // is not secure", and the browser treats the POST as cross-site and drops the SameSite=Lax
+  // correlation cookie, so the login fails. A relative path always posts to the address in the
+  // address bar.
   const submit = signed => {
     const form = $('login-form');
-    form.action = cfg.url;
+    form.action = cfg.path;
     form.state.value = cfg.state;
     form.event.value = typeof signed === 'string' ? signed : JSON.stringify(signed);
     form.submit();

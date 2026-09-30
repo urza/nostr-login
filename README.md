@@ -74,14 +74,22 @@ curl https://guestbook.example.com/version    # full commit SHA of the running b
 
 The volume `/data` holds the database and the keys that encrypt login cookies. Keep it: without it, a new container has no messages and all users must log in again.
 
-On a real domain, run it behind a reverse proxy with HTTPS and set the public address. The signed login event must name the exact address that the user sees in the browser:
+On a real domain, run it behind a reverse proxy with HTTPS. The signed login event and the QR code must name the exact address that the user sees in the browser. The image reads `X-Forwarded-Proto` and `X-Forwarded-For` from the proxy by default, so with a proxy that passes the `Host` header (Caddy, Traefik, nginx with `proxy_set_header Host $host`) no setting is needed. Publish the port to localhost only, so nobody can send forged forwarded headers to the container:
+
+```bash
+docker run -d --name nostr-guestbook -p 127.0.0.1:8080:8080 -v nostr-guestbook:/data \
+  ghcr.io/urza/nostr-login
+```
+
+If the proxy changes the host or does not send `X-Forwarded-Proto`, set the public address:
 
 ```bash
 docker run -d --name nostr-guestbook -p 127.0.0.1:8080:8080 -v nostr-guestbook:/data \
   -e Nostr__PublicOrigin=https://guestbook.example.com \
-  -e ASPNETCORE_FORWARDEDHEADERS_ENABLED=true \
   ghcr.io/urza/nostr-login
 ```
+
+The login page compares the address in the browser with the address that the app knows. When they differ, it shows a notice with both addresses. That is the first thing to check when a login fails.
 
 ### Configuration
 
@@ -89,8 +97,8 @@ All settings are environment variables. Lists use `__0`, `__1` and so on.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `Nostr__PublicOrigin` | request scheme and host | Public address, for example `https://guestbook.example.com`. Needed behind a proxy that changes the host or scheme. |
-| `ASPNETCORE_FORWARDEDHEADERS_ENABLED` | `false` | Set `true` behind a reverse proxy, so the app sees the real client IP (for rate limits) and scheme. |
+| `Nostr__PublicOrigin` | request scheme and host | Public address, for example `https://guestbook.example.com`. Needed behind a proxy that changes the host or does not send `X-Forwarded-Proto`. |
+| `ASPNETCORE_FORWARDEDHEADERS_ENABLED` | `true` in the image, `false` with `dotnet run` | Reads `X-Forwarded-Proto` and `X-Forwarded-For`, so the app sees the public scheme and the real client IP (for rate limits). Set `false` when the container port is reachable directly, because the headers are trusted from any client. |
 | `Nostr__NostrConnectRelays__0`, `__1`, ... | `nos.lol`, `relay.primal.net`, `nostr.mom` | Relays for the QR-code login. The QR code lists only the relays that the server could reach, in this order. |
 | `Nostr__ProfileRelays__0`, `__1`, ... | `purplepag.es`, `relay.primal.net`, `relay.damus.io`, `nos.lol` | Relays for names and pictures. |
 | `Guestbook__DataDirectory` | `/data` in Docker | Folder for the database and the cookie keys. |
