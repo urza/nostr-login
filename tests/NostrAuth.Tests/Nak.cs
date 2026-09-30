@@ -10,18 +10,29 @@ internal sealed class Nak : IDisposable
     public static readonly string? Path = Find();
     private readonly List<Process> _processes = [];
 
+    private Process? _relay;
+    private int _relayPort;
+
     /// <summary>Starts an in-memory relay and returns its ws:// URL.</summary>
-    public async Task<string> StartRelayAsync(string? eventsFile = null)
+    public async Task<string> StartRelayAsync(string? eventsFile = null, int? port = null)
     {
-        var port = FreePort();
-        var args = new List<string> { "serve", "--hostname", "127.0.0.1", "--port", port.ToString() };
+        _relayPort = port ?? FreePort();
+        var args = new List<string> { "serve", "--hostname", "127.0.0.1", "--port", _relayPort.ToString() };
         if (eventsFile is not null) args.AddRange(["--events", eventsFile]);
-        Start([.. args]);
-        await WaitForPortAsync(port);
-        return $"ws://127.0.0.1:{port}";
+        _relay = Start([.. args]);
+        await WaitForPortAsync(_relayPort);
+        return $"ws://127.0.0.1:{_relayPort}";
     }
 
-    public void Start(params string[] args)
+    /// <summary>Kills the relay, so every connection to it drops. <see cref="StartRelayAsync"/> with the old port brings it back.</summary>
+    public int StopRelay()
+    {
+        _relay?.Kill(entireProcessTree: true);
+        _relay?.WaitForExit();
+        return _relayPort;
+    }
+
+    public Process Start(params string[] args)
     {
         var psi = new ProcessStartInfo(Path!) { RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true };
         foreach (var a in args) psi.ArgumentList.Add(a);
@@ -34,6 +45,7 @@ internal sealed class Nak : IDisposable
         p.BeginOutputReadLine();
         p.BeginErrorReadLine();
         _processes.Add(p);
+        return p;
     }
 
     public void Dispose()

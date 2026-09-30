@@ -85,7 +85,7 @@ All settings are environment variables. Lists use `__0`, `__1` and so on.
 |---|---|---|
 | `Nostr__PublicOrigin` | request scheme and host | Public address, for example `https://guestbook.example.com`. Needed behind a proxy that changes the host or scheme. |
 | `ASPNETCORE_FORWARDEDHEADERS_ENABLED` | `false` | Set `true` behind a reverse proxy, so the app sees the real client IP (for rate limits) and scheme. |
-| `Nostr__NostrConnectRelays__0`, `__1`, ... | `relay.nsec.app`, `relay.damus.io`, `nos.lol` | Relays for the QR-code login. The QR code lists only the relays that the server could reach, in this order. |
+| `Nostr__NostrConnectRelays__0`, `__1`, ... | `nos.lol`, `relay.primal.net`, `nostr.mom` | Relays for the QR-code login. The QR code lists only the relays that the server could reach, in this order. |
 | `Nostr__ProfileRelays__0`, `__1`, ... | `purplepag.es`, `relay.primal.net`, `relay.damus.io`, `nos.lol` | Relays for names and pictures. |
 | `Guestbook__DataDirectory` | `/data` in Docker | Folder for the database and the cookie keys. |
 | `ASPNETCORE_HTTP_PORTS` | `8080` | Port inside the container. |
@@ -154,7 +154,7 @@ Main options of `AddNostr()`:
 |---|---|---|
 | `CallbackPath` | `/signin-nostr` | The login page (GET) and the login POST. |
 | `PublicOrigin` | request scheme and host | Set it behind a proxy. |
-| `NostrConnectRelays` | `relay.nsec.app`, `relay.damus.io`, `nos.lol` | Empty list turns the QR code option off. Use your own relay if you can. |
+| `NostrConnectRelays` | `nos.lol`, `relay.primal.net`, `nostr.mom` | Empty list turns the QR code option off. Use your own relay if you can. |
 | `MaxNostrConnectSessions` | 100 | Active NIP-46 sessions per instance. |
 | `ProfileRelays` | `purplepag.es`, `relay.primal.net`, `relay.damus.io`, `nos.lol` | Empty list turns the profile lookup during login off. |
 | `AllowManualEvent` | `true` | The "Sign manually" box. |

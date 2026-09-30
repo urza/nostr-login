@@ -107,14 +107,128 @@ public sealed class NostrConnectTests : IAsyncLifetime
         var browser = app.NewBrowser();
         var page = await browser.OpenLoginPageAsync();
 
+        // The same page may replace its own attempt: that does not count against the cap.
         var first = await (await browser.PostFormAsync(page.ConnectPath!, new() { ["state"] = page.State })).Content.ReadFromJsonAsync<StartResponse>();
-        var again = await (await browser.PostFormAsync(page.ConnectPath!, new() { ["state"] = page.State })).Content.ReadFromJsonAsync<StartResponse>();
-        Assert.Equal(first!.Id, again!.Id);
+        var again = await browser.PostFormAsync(page.ConnectPath!, new() { ["state"] = page.State });
+        Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+        Assert.NotEqual(first!.Id, (await again.Content.ReadFromJsonAsync<StartResponse>())!.Id);
 
         var other = app.NewBrowser();
         var otherPage = await other.OpenLoginPageAsync();
         var refused = await other.PostFormAsync(otherPage.ConnectPath!, new() { ["state"] = otherPage.State });
         Assert.Equal(HttpStatusCode.ServiceUnavailable, refused.StatusCode);
+    }
+
+    // --- Signer behaviour (FakeSigner) ------------------------------------------------------
+
+    private static async Task<(TestApp.Browser Browser, TestApp.LoginPageConfig Page, StartResponse Session)> ShowQrAsync(TestApp app)
+    {
+        var browser = app.NewBrowser();
+        var page = await browser.OpenLoginPageAsync();
+        var session = await ShowQrAsync(browser, page);
+        return (browser, page, session);
+    }
+
+    private static async Task<StartResponse> ShowQrAsync(TestApp.Browser browser, TestApp.LoginPageConfig page) =>
+        (await (await browser.PostFormAsync(page.ConnectPath!, new() { ["state"] = page.State })).Content.ReadFromJsonAsync<StartResponse>())!;
+
+    private static async Task<PollResponse> WaitForResultAsync(TestApp.Browser browser, TestApp.LoginPageConfig page, string id)
+    {
+        PollResponse? poll = null;
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            poll = await (await browser.GetAsync($"{page.ConnectPath}/{id}")).Content.ReadFromJsonAsync<PollResponse>();
+            if (poll!.Status is "Signed" or "Failed") return poll;
+            await Task.Delay(200);
+        }
+        return poll!;
+    }
+
+    [SkippableFact]
+    public async Task Signer_with_per_connection_key_logs_in_as_the_user()
+    {
+        Skip.If(Nak.Path is null, "nak is not installed");
+        await using var app = await TestApp.StartAsync(o => o.NostrConnectRelays = [_relay]);
+        var (browser, page, session) = await ShowQrAsync(app);
+
+        await using var signer = new FakeSigner(_user);
+        await signer.ConnectAsync(session.Uri);
+        var result = await WaitForResultAsync(browser, page, session.Id);
+
+        Assert.Equal("Signed", result.Status);
+        Assert.Equal(["get_public_key", "sign_event"], signer.Methods);
+        Assert.Equal(HttpStatusCode.Redirect, (await browser.SubmitAsync(page, NostrEvent.TryParse(result.Event)!)).StatusCode);
+        // The identity is the user key, not the signer's routing key.
+        Assert.Equal(_user.PublicKeyHex, await (await browser.GetAsync("/me")).Content.ReadAsStringAsync());
+    }
+
+    [SkippableFact]
+    public async Task Signer_with_a_clock_behind_the_server_still_works()
+    {
+        Skip.If(Nak.Path is null, "nak is not installed");
+        await using var app = await TestApp.StartAsync(o => o.NostrConnectRelays = [_relay]);
+        var (browser, page, session) = await ShowQrAsync(app);
+
+        // A phone clock two minutes behind. A "since" filter on the subscription drops these replies.
+        await using var signer = new FakeSigner(_user) { ClockSkew = TimeSpan.FromMinutes(-2) };
+        await signer.ConnectAsync(session.Uri);
+
+        Assert.Equal("Signed", (await WaitForResultAsync(browser, page, session.Id)).Status);
+    }
+
+    [SkippableFact]
+    public async Task Signer_that_signs_with_another_key_is_refused()
+    {
+        Skip.If(Nak.Path is null, "nak is not installed");
+        await using var app = await TestApp.StartAsync(o => o.NostrConnectRelays = [_relay]);
+        var (browser, page, session) = await ShowQrAsync(app);
+
+        await using var signer = new FakeSigner(_user) { SignWith = NostrKey.Generate() };
+        await signer.ConnectAsync(session.Uri);
+        var result = await WaitForResultAsync(browser, page, session.Id);
+
+        Assert.Equal("Failed", result.Status);
+        Assert.Contains("different key", result.Error);
+    }
+
+    [SkippableFact]
+    public async Task New_QR_code_replaces_the_old_attempt()
+    {
+        Skip.If(Nak.Path is null, "nak is not installed");
+        await using var app = await TestApp.StartAsync(o => o.NostrConnectRelays = [_relay]);
+        var (browser, page, first) = await ShowQrAsync(app);
+        var second = await ShowQrAsync(browser, page);
+
+        Assert.NotEqual(first.Id, second.Id);
+        Assert.NotEqual(first.Uri, second.Uri);
+        var old = await (await browser.GetAsync($"{page.ConnectPath}/{first.Id}")).Content.ReadFromJsonAsync<PollResponse>();
+        Assert.Equal("Failed", old!.Status);
+        Assert.Contains("Replaced", old.Error);
+
+        await using var signer = new FakeSigner(_user);
+        await signer.ConnectAsync(second.Uri);
+        Assert.Equal("Signed", (await WaitForResultAsync(browser, page, second.Id)).Status);
+    }
+
+    [SkippableFact]
+    public async Task Relay_that_drops_the_connection_is_reconnected()
+    {
+        Skip.If(Nak.Path is null, "nak is not installed");
+        using var nak = new Nak();
+        var relay = await nak.StartRelayAsync();
+        await using var app = await TestApp.StartAsync(o => o.NostrConnectRelays = [relay]);
+        var (browser, page, session) = await ShowQrAsync(app);
+
+        // The relay goes away while the user still looks for the phone, then comes back.
+        var port = nak.StopRelay();
+        await Task.Delay(500);
+        await nak.StartRelayAsync(port: port);
+        await Task.Delay(TimeSpan.FromSeconds(4)); // backoff 1 s, then 2 s
+
+        await using var signer = new FakeSigner(_user);
+        await signer.ConnectAsync(session.Uri);
+        Assert.Equal("Signed", (await WaitForResultAsync(browser, page, session.Id)).Status);
     }
 
     private sealed record StartResponse(string Id, string Uri, string QrSvg);

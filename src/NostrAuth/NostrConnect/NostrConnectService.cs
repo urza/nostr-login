@@ -29,17 +29,29 @@ public sealed class NostrConnectSession
     public string? AuthUrl { get; internal set; }
     public string? SignedEventJson { get; internal set; }
     public string? Error { get; internal set; }
+
+    /// <summary>Stops the relay work when a newer attempt replaces this one.</summary>
+    internal CancellationTokenSource Stop { get; } = new();
+
+    internal bool IsActive => Status is NostrConnectStatus.WaitingForSigner or NostrConnectStatus.WaitingForSignature;
 }
 
 /// <summary>
 /// Server-side NIP-46 client for login. The browser needs no Nostr code: the server shows a
-/// <c>nostrconnect://</c> URI, the user scans it with a signer app (Amber, nsec.app, ...), and the
-/// server asks the signer to sign the login event. The signed event then goes through the same
-/// validation as an event from a browser extension.
+/// <c>nostrconnect://</c> URI, the user scans it with a signer app (Amber, Primal, nsec.app, ...),
+/// and the server asks the signer to sign the login event. The signed event then goes through the
+/// same validation as an event from a browser extension.
 /// </summary>
+/// <remarks>
+/// Handshake: (1) the signer's <c>connect</c> reply must carry our one-time secret; this pins the
+/// signer's pubkey, which is only a routing key. (2) <c>get_public_key</c> gives the user's pubkey.
+/// (3) <c>sign_event</c> signs the login event, and its pubkey must be that user pubkey.
+/// </remarks>
 public sealed class NostrConnectService(ILogger<NostrConnectService> logger, TimeProvider time)
 {
     public const int Kind = 24133;
+    private const string Sub = "nip46";
+    private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(15);
     private readonly ConcurrentDictionary<string, NostrConnectSession> _sessions = new();
 
     /// <param name="template">Unsigned login event with a <c>challenge</c> tag. Its <c>created_at</c> is replaced at signing time.</param>
@@ -49,12 +61,14 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
         RemoveExpired();
 
         // Each session holds relay connections for minutes, and anyone can open the login page.
-        // So: one session per login page (a second click gets the same QR code), and a global cap.
+        // So: one active attempt per login page, and a global cap. A new QR code for the same page
+        // replaces the old attempt instead of returning it: after a dismissed or lost approval, a
+        // rescan of the old code would be ignored, because its signer is already pinned.
         // The count is not atomic with the add below. A few sessions over the cap under a burst are acceptable.
         var challenge = template.GetTag("challenge") ?? throw new ArgumentException("Template needs a challenge tag.", nameof(template));
-        var active = _sessions.Values.Where(s => s.Status is NostrConnectStatus.WaitingForSigner or NostrConnectStatus.WaitingForSignature).ToList();
-        if (active.FirstOrDefault(s => s.Challenge == challenge) is { } existing) return existing;
-        if (active.Count >= maxActive) return null;
+        var active = _sessions.Values.Where(s => s.IsActive).ToList();
+        foreach (var old in active.Where(s => s.Challenge == challenge)) Cancel(old, "Replaced by a new QR code.");
+        if (active.Count(s => s.Challenge != challenge) >= maxActive) return null;
 
         // A fresh client key per attempt. It only encrypts the NIP-46 channel and is thrown away after.
         var clientKey = NostrKey.Generate();
@@ -68,6 +82,8 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
         using var connectTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var attempts = await Task.WhenAll(relays.Select(u => TryConnectAsync(u, connectTimeout.Token)));
         var connections = attempts.OfType<RelayConnection>().ToList();
+        for (var i = 0; i < relays.Count; i++)
+            if (attempts[i] is null) logger.LogWarning("Relay {Relay} is not reachable. It is left out of the QR code.", relays[i]);
 
         var query = string.Join("&",
             connections.Select(c => "relay=" + Uri.EscapeDataString(c.Url.OriginalString))
@@ -103,29 +119,53 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
 
     private async Task RunAsync(NostrConnectSession session, NostrKey clientKey, string secret, NostrEvent template, IReadOnlyList<RelayConnection> connections, TimeSpan timeout)
     {
-        using var cts = new CancellationTokenSource(timeout);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(session.Stop.Token);
+        cts.CancelAfter(timeout);
         var ct = cts.Token;
+
+        // No "since" in the filter: the client key is new for this session, so there are no old
+        // events to skip. And with "since" the relay would drop the replies of a signer whose
+        // phone clock is a few seconds behind the server.
+        var filter = new Dictionary<string, object> { ["kinds"] = new[] { Kind }, ["#p"] = new[] { clientKey.PublicKeyHex } };
+        var live = new ConcurrentDictionary<string, RelayConnection>();
+        var incoming = Channel.CreateUnbounded<NostrEvent>();
+        var relayTasks = connections.Select(c => KeepRelayAsync(session, c.Url.OriginalString, c, filter, live, incoming.Writer, ct)).ToArray();
+
+        async Task<string> RequestAsync(string signerPubKey, byte[] conversationKey, string method, string[] parameters)
+        {
+            var id = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8));
+            var request = JsonSerializer.Serialize(new { id, method, @params = parameters });
+            var evt = new NostrEvent
+            {
+                Kind = Kind,
+                CreatedAt = time.GetUtcNow().ToUnixTimeSeconds(),
+                Tags = [["p", signerPubKey]],
+                Content = Nip44.Encrypt(request, conversationKey),
+            }.Sign(clientKey);
+            // One logical request: the same event to every live relay. The signer may get it twice.
+            foreach (var c in live.Values)
+            {
+                try
+                {
+                    await c.PublishAsync(evt, ct);
+                }
+                catch (Exception e) when (e is not OperationCanceledException)
+                {
+                    logger.LogInformation("Nostr Connect {Id}: publish to {Relay} failed: {Error}", session.Id, c.Url, e.Message);
+                }
+            }
+            return id;
+        }
+
         try
         {
-            const string sub = "nip46";
-            var filter = new Dictionary<string, object>
-            {
-                ["kinds"] = new[] { Kind },
-                ["#p"] = new[] { clientKey.PublicKeyHex },
-                ["since"] = time.GetUtcNow().ToUnixTimeSeconds() - 10,
-            };
-            foreach (var c in connections) await c.SubscribeAsync(sub, filter, ct);
-
-            // The same reply arrives once per relay. The state checks below make duplicates harmless.
-            var merged = Merge(connections, ct);
-            string? signerPubKey = null;
-            string? signRequestId = null;
+            string? signerPubKey = null, userPubKey = null, pendingId = null;
             byte[]? conversationKey = null;
 
-            await foreach (var msg in merged.ReadAllAsync(ct))
+            // The same reply arrives once per relay. The state checks below make duplicates harmless.
+            await foreach (var evt in incoming.Reader.ReadAllAsync(ct))
             {
-                var evt = RelayConnection.GetEvent(msg, sub);
-                if (evt is null || evt.Kind != Kind) continue;
+                if (evt.Kind != Kind || !evt.Tags.Any(t => t is ["p", var p, ..] && p == clientKey.PublicKeyHex)) continue;
                 // Signer apps differ in small ways. Log each dropped reply with its reason,
                 // or a login that "does nothing" cannot be diagnosed.
                 if (!evt.VerifySignature())
@@ -147,8 +187,8 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
 
                 if (signerPubKey is null)
                 {
-                    // Step 1: the signer answers the nostrconnect URI. Its pubkey can differ from
-                    // the user's pubkey, so this proves nothing about the user yet.
+                    // Step 1: the connect reply. Its author is the signer's routing key, which can
+                    // differ from the user's key (new Amber makes one per connection).
                     if (reply.Result != secret)
                     {
                         // Do not log the whole result: it may be our secret with a small change.
@@ -159,40 +199,46 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
                     signerPubKey = evt.PubKey;
                     conversationKey = key;
                     session.Status = NostrConnectStatus.WaitingForSignature;
-
-                    signRequestId = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8));
-                    var unsigned = new { kind = template.Kind, content = template.Content, tags = template.Tags, created_at = time.GetUtcNow().ToUnixTimeSeconds() };
-                    var request = JsonSerializer.Serialize(new { id = signRequestId, method = "sign_event", @params = new[] { JsonSerializer.Serialize(unsigned) } });
-                    var requestEvent = new NostrEvent
-                    {
-                        Kind = Kind,
-                        CreatedAt = time.GetUtcNow().ToUnixTimeSeconds(),
-                        Tags = [["p", signerPubKey]],
-                        Content = Nip44.Encrypt(request, conversationKey),
-                    }.Sign(clientKey);
-                    foreach (var c in connections) await c.PublishAsync(requestEvent, ct);
+                    pendingId = await RequestAsync(signerPubKey, conversationKey, "get_public_key", []);
                     continue;
                 }
 
-                // Step 2: the reply to sign_event. This is the actual proof.
-                if (reply.Id != signRequestId) continue;
+                if (reply.Id != pendingId) continue;
                 if (reply.Result == "auth_url")
                 {
                     session.AuthUrl = reply.Error;
                     continue;
                 }
                 if (!string.IsNullOrEmpty(reply.Error)) throw new InvalidOperationException($"Signer refused: {reply.Error}");
-                if (NostrEvent.TryParse(reply.Result) is null) throw new InvalidOperationException("Signer returned an invalid event.");
+
+                if (userPubKey is null)
+                {
+                    // Step 2: get_public_key. This is the user's identity as the signer states it.
+                    if (!Hex.IsLowerHex(reply.Result?.ToLowerInvariant(), 32)) throw new InvalidOperationException("Signer returned an invalid public key.");
+                    userPubKey = reply.Result!.ToLowerInvariant();
+                    session.AuthUrl = null;
+                    var unsigned = new { kind = template.Kind, content = template.Content, tags = template.Tags, created_at = time.GetUtcNow().ToUnixTimeSeconds() };
+                    pendingId = await RequestAsync(signerPubKey, conversationKey!, "sign_event", [JsonSerializer.Serialize(unsigned)]);
+                    continue;
+                }
+
+                // Step 3: the signed login event, the actual proof. The login validation checks
+                // its signature later. Here it must also come from the key that get_public_key named:
+                // a signer that signs with its per-connection key would otherwise log the user in
+                // as a new, unknown user each time, with no error anywhere.
+                if (NostrEvent.TryParse(reply.Result) is not { } signed) throw new InvalidOperationException("Signer returned an invalid event.");
+                if (signed.PubKey != userPubKey) throw new InvalidOperationException("Signer signed with a different key than it named as your public key.");
 
                 session.SignedEventJson = reply.Result;
                 session.Status = NostrConnectStatus.Signed;
                 return;
             }
-            throw new InvalidOperationException("All relay connections closed.");
         }
         catch (OperationCanceledException)
         {
-            Fail(session, "Timed out while waiting for the signer.");
+            Fail(session, session.Status == NostrConnectStatus.WaitingForSigner
+                ? "Timed out: the signer app did not answer. Try a new QR code."
+                : "Timed out while waiting for your approval in the signer app.");
         }
         catch (Exception e)
         {
@@ -202,12 +248,71 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
         finally
         {
             await cts.CancelAsync();
-            foreach (var c in connections) await c.DisposeAsync();
+            await Task.WhenAll(relayTasks);
         }
+    }
+
+    /// <summary>
+    /// Keeps one relay subscribed for the whole session. The user may need minutes to approve,
+    /// and a relay can drop the connection in that time; replies sent through it would be lost.
+    /// </summary>
+    private async Task KeepRelayAsync(NostrConnectSession session, string url, RelayConnection? connection, object filter,
+        ConcurrentDictionary<string, RelayConnection> live, ChannelWriter<NostrEvent> incoming, CancellationToken ct)
+    {
+        var backoff = TimeSpan.FromSeconds(1);
+        while (!ct.IsCancellationRequested)
+        {
+            if (connection is not null)
+            {
+                try
+                {
+                    await connection.SubscribeAsync(Sub, filter, ct);
+                    live[url] = connection;
+                    backoff = TimeSpan.FromSeconds(1);
+                    await foreach (var msg in connection.Messages.ReadAllAsync(ct))
+                        if (RelayConnection.GetEvent(msg, Sub) is { } evt) incoming.TryWrite(evt);
+                }
+                catch (Exception e) when (e is not OperationCanceledException)
+                {
+                    logger.LogDebug(e, "Nostr Connect {Id}: relay {Relay} failed", session.Id, url);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Session is over.
+                }
+                finally
+                {
+                    live.TryRemove(new KeyValuePair<string, RelayConnection>(url, connection));
+                    await connection.DisposeAsync();
+                }
+                if (ct.IsCancellationRequested) return;
+                logger.LogInformation("Nostr Connect {Id}: lost relay {Relay}, reconnecting", session.Id, url);
+            }
+
+            try
+            {
+                await Task.Delay(backoff, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            backoff = backoff * 2 > MaxBackoff ? MaxBackoff : backoff * 2;
+            connection = await TryConnectAsync(url, ct);
+        }
+    }
+
+    private void Cancel(NostrConnectSession session, string reason)
+    {
+        Fail(session, reason);
+        session.Stop.Cancel();
     }
 
     private static void Fail(NostrConnectSession session, string error)
     {
+        // First outcome wins: a replaced session keeps "replaced", not the "timed out" that
+        // follows from its cancellation.
+        if (!session.IsActive) return;
         session.Error = error;
         session.Status = NostrConnectStatus.Failed;
     }
@@ -220,28 +325,10 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
         }
         catch (Exception e)
         {
-            // Timeout included: a relay that is slow to connect is left out of the QR code.
-            logger.LogWarning(e, "Cannot connect to relay {Relay}", url);
+            // Timeout included. Callers log what the failure means for them.
+            logger.LogDebug("Cannot connect to relay {Relay}: {Error}", url, e.Message);
             return null;
         }
-    }
-
-    private static ChannelReader<JsonElement[]> Merge(IReadOnlyList<RelayConnection> connections, CancellationToken ct)
-    {
-        var merged = Channel.CreateUnbounded<JsonElement[]>();
-        var pumps = connections.Select(async c =>
-        {
-            try
-            {
-                await foreach (var m in c.Messages.ReadAllAsync(ct)) merged.Writer.TryWrite(m);
-            }
-            catch (OperationCanceledException)
-            {
-                // Session is over.
-            }
-        }).ToArray();
-        _ = Task.WhenAll(pumps).ContinueWith(_ => merged.Writer.TryComplete(), TaskScheduler.Default);
-        return merged.Reader;
     }
 
     private sealed record Reply(string? Id, string? Result, string? Error);
