@@ -153,6 +153,25 @@
   // The generation number stops the poll loop of a replaced session.
   let generation = 0;
   let connectUri = '';
+
+  // The page remembers its session. On a phone the signer app comes to the front, and the
+  // browser may discard this tab; the reloaded page must continue to poll the same server
+  // session, or a signature that arrives later is lost. sessionStorage survives a tab reload.
+  // The keys only live for this login page (one challenge), so an old session is never reused.
+  const storeKey = 'nostr-connect:' + cfg.challenge;
+  const remember = s => { try { sessionStorage.setItem(storeKey, JSON.stringify(s)); } catch { /* storage off */ } };
+  const forget = () => { try { sessionStorage.removeItem(storeKey); } catch { /* storage off */ } };
+  const recall = () => { try { return JSON.parse(sessionStorage.getItem(storeKey)); } catch { return null; } };
+
+  const show = (session, gen) => {
+    // The SVG comes from our own server (QRCoder), not from user input.
+    $('connect-qr').innerHTML = session.qrSvg;
+    $('connect-open').href = connectUri = session.uri;
+    $('connect-btn').hidden = true;
+    $('connect-box').hidden = false;
+    poll(session.id, gen);
+  };
+
   const startConnect = async () => {
     const gen = ++generation;
     $('error').hidden = true;
@@ -166,10 +185,8 @@
       return false;
     }
     const session = await res.json();
-    // The SVG comes from our own server (QRCoder), not from user input.
-    $('connect-qr').innerHTML = session.qrSvg;
-    $('connect-open').href = connectUri = session.uri;
-    poll(session.id, gen);
+    remember(session);
+    show(session, gen);
     return true;
   };
 
@@ -177,12 +194,7 @@
     $('connect-section').hidden = false;
     $('connect-btn').addEventListener('click', async () => {
       $('connect-btn').disabled = true;
-      if (await startConnect()) {
-        $('connect-btn').hidden = true;
-        $('connect-box').hidden = false;
-      } else {
-        $('connect-btn').disabled = false;
-      }
+      if (!await startConnect()) $('connect-btn').disabled = false;
     });
     $('connect-new').addEventListener('click', startConnect);
     $('connect-copy').addEventListener('click', () => navigator.clipboard.writeText(connectUri));
@@ -197,7 +209,7 @@
     let s;
     try {
       const res = await fetch(cfg.connectPath + '/' + encodeURIComponent(id), { cache: 'no-store' });
-      if (!res.ok) { showError('The Nostr Connect session is gone. Get a new QR code.'); return; }
+      if (!res.ok) { forget(); showError('The Nostr Connect session is gone. Get a new QR code.'); return; }
       s = await res.json();
     } catch {
       // Phones pause background tabs while the signer app is open. Try again on the next tick.
@@ -205,8 +217,9 @@
       return;
     }
     if (gen !== generation) return;
-    if (s.status === 'Signed') { $('connect-status').textContent = 'Signed. Logging in…'; submit(s.event); return; }
+    if (s.status === 'Signed') { forget(); $('connect-status').textContent = 'Signed. Logging in…'; submit(s.event); return; }
     if (s.status === 'Failed') {
+      forget();
       $('connect-status').textContent = '';
       showError((s.error || 'Nostr Connect failed.') + ' Use "New QR code" to try again.');
       return;
@@ -218,6 +231,15 @@
     }
     setTimeout(() => poll(id, gen), 1500);
   };
+
+  // Resume after a tab reload (see "remember" above). Placed after poll, which it calls.
+  if (cfg.connectPath) {
+    const saved = recall();
+    if (saved && saved.id) {
+      $('connect-status').textContent = 'Checking your signer session…';
+      show(saved, ++generation);
+    }
+  }
 
   // --- Manual signing ------------------------------------------------------------------
   if (cfg.manual) {
