@@ -66,6 +66,12 @@ A small, complete app on top of the library ([`app/NostrGuestbook`](app/NostrGue
 docker run -d --name nostr-guestbook -p 8080:8080 -v nostr-guestbook:/data ghcr.io/urza/nostr-login
 ```
 
+To see which version runs, look at the page footer (`version <commit>`, linked to the commit on GitHub), or ask the server:
+
+```bash
+curl https://guestbook.example.com/version    # full commit SHA of the running build
+```
+
 The volume `/data` holds the database and the keys that encrypt login cookies. Keep it: without it, a new container has no messages and all users must log in again.
 
 On a real domain, run it behind a reverse proxy with HTTPS and set the public address. The signed login event must name the exact address that the user sees in the browser:

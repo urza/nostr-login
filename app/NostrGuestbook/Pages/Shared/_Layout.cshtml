@@ -50,7 +50,15 @@
     <p>
         Your private key never leaves your signer. The site only checks a signature.
         Built with <strong>NostrAuth</strong> for ASP.NET Core ·
-        <a href="https://github.com/urza/nostr-login">Source on GitHub</a>
+        <a href="https://github.com/urza/nostr-login">Source on GitHub</a> ·
+        @if (Display.Commit is { } commit)
+        {
+            <a href="https://github.com/urza/nostr-login/commit/@commit" title="@commit">version @Display.Version</a>
+        }
+        else
+        {
+            <span>development build</span>
+        }
     </p>
 </footer>
 

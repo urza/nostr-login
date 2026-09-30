@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Reflection;
 using NostrAuth;
 
 namespace NostrGuestbook;
@@ -6,6 +7,19 @@ namespace NostrGuestbook;
 /// <summary>Small view helpers for author display.</summary>
 public static class Display
 {
+    /// <summary>
+    /// Git commit of this build, or null for a build without one. The .NET SDK appends
+    /// "+&lt;SourceRevisionId&gt;" to the informational version: from git when built from source,
+    /// from the GIT_SHA build argument in Docker (the image build has no .git folder).
+    /// </summary>
+    public static readonly string? Commit =
+        typeof(Display).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion is { } v
+        && v.IndexOf('+') is var i and >= 0 && v[(i + 1)..] is { Length: >= 7 } sha && sha.All(Uri.IsHexDigit)
+            ? sha.ToLowerInvariant()
+            : null;
+
+    public static string Version => Commit?[..7] ?? "dev";
+
     public static string Npub(string pubKey) => Nip19.ToNpub(pubKey);
 
     public static string ShortNpub(string pubKey)

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using NostrAuth.Authentication;
+using NostrGuestbook;
 using NostrGuestbook.Data;
 using NostrGuestbook.Profiles;
 
@@ -111,5 +112,9 @@ app.MapGet("/api/me/profile", async (ClaimsPrincipal user, GuestbookDb db, Profi
 }).RequireAuthorization();
 
 app.MapGet("/healthz", () => Results.Text("ok"));
+// For a quick check of what runs: curl https://your.domain/version
+app.MapGet("/version", () => Results.Text(Display.Commit ?? "dev"));
+
+app.Logger.LogInformation("Nostr Guestbook version {Version}", Display.Commit ?? "dev");
 
 app.Run();

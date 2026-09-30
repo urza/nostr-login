@@ -7,6 +7,9 @@
 # native library comes from the NuGet runtime pack for the target architecture.
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG TARGETARCH
+# Commit SHA for the version in the footer. .dockerignore leaves out .git, so it comes from
+# outside: the GitHub workflow passes github.sha. Without it the app shows "development build".
+ARG GIT_SHA=
 WORKDIR /src
 
 # Project files first: the restore layer stays cached while only source code changes.
@@ -16,7 +19,8 @@ RUN dotnet restore app/NostrGuestbook/NostrGuestbook.csproj -a $TARGETARCH
 
 COPY src/NostrAuth/ src/NostrAuth/
 COPY app/NostrGuestbook/ app/NostrGuestbook/
-RUN dotnet publish app/NostrGuestbook/NostrGuestbook.csproj -c Release -a $TARGETARCH --no-restore -o /out
+RUN dotnet publish app/NostrGuestbook/NostrGuestbook.csproj -c Release -a $TARGETARCH --no-restore -o /out \
+    -p:SourceRevisionId=$GIT_SHA
 RUN mkdir /data
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
