@@ -24,7 +24,7 @@ public static class NostrAuthenticationExtensions
         services.TryAddSingleton<NostrConnectService>();
         services.TryAddSingleton<ProfileFetcher>();
         services.AddHttpClient(ProfileFetcher.Nip05HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(5))
-            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+            .ConfigurePrimaryHttpMessageHandler(PublicOnlyHttpHandler.Create);
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<NostrLoginOptions>, NostrLoginPostConfigure>());
         return builder.AddRemoteScheme<NostrLoginOptions, NostrLoginHandler>(scheme, displayName, configure);
     }

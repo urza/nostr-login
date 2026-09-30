@@ -42,6 +42,9 @@ public sealed class NostrHttpAuthHandler(
     TimeProvider time)
     : AuthenticationHandler<NostrHttpAuthOptions>(options, logger, encoder)
 {
+    // Empty counts as "not set": an empty environment variable must not produce a relative URL.
+    private string Origin => string.IsNullOrWhiteSpace(Options.PublicOrigin) ? $"{Request.Scheme}://{Request.Host}" : Options.PublicOrigin.TrimEnd('/');
+
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         string? header = Request.Headers.Authorization;
@@ -62,7 +65,7 @@ public sealed class NostrHttpAuthHandler(
         var body = await ReadBodyAsync();
         if (body is null) return AuthenticateResult.Fail("Request body is too large.");
 
-        var url = (Options.PublicOrigin?.TrimEnd('/') ?? $"{Request.Scheme}://{Request.Host}") + Request.PathBase + Request.Path + Request.QueryString;
+        var url = Origin + Request.PathBase + Request.Path + Request.QueryString;
         var error = Nip98.Validate(evt, url, Request.Method, time.GetUtcNow(), Options.MaxEventAge, Options.MaxFutureSkew, body);
         if (error is null && Options.RequirePayloadHash && body.Length > 0 && evt.GetTag("payload") is null)
             error = "Payload tag is required for a request with a body.";

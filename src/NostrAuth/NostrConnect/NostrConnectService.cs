@@ -44,7 +44,7 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
 
     /// <param name="template">Unsigned login event with a <c>challenge</c> tag. Its <c>created_at</c> is replaced at signing time.</param>
     /// <returns>Null when <paramref name="maxActive"/> sessions already wait for a signer.</returns>
-    public NostrConnectSession? Start(NostrEvent template, IReadOnlyList<string> relays, string appName, string appUrl, TimeSpan timeout, int maxActive)
+    public async Task<NostrConnectSession?> StartAsync(NostrEvent template, IReadOnlyList<string> relays, string appName, string appUrl, TimeSpan timeout, int maxActive)
     {
         RemoveExpired();
 
@@ -61,8 +61,16 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
         // The secret proves that the signer's "connect" reply answers our URI. Without it, anyone
         // who watches the relay could answer first and push their own key into this login.
         var secret = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
+
+        // Connect first, and put only the relays that answered into the URI. In tests, Primal
+        // answered only on the first relay of the URI; if that relay is down (or blocked for this
+        // server), the login would hang with no error. Order stays as configured.
+        using var connectTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var attempts = await Task.WhenAll(relays.Select(u => TryConnectAsync(u, connectTimeout.Token)));
+        var connections = attempts.OfType<RelayConnection>().ToList();
+
         var query = string.Join("&",
-            relays.Select(r => "relay=" + Uri.EscapeDataString(r))
+            connections.Select(c => "relay=" + Uri.EscapeDataString(c.Url.OriginalString))
                 .Append("secret=" + secret)
                 .Append("perms=" + Uri.EscapeDataString($"sign_event:{template.Kind}"))
                 .Append("name=" + Uri.EscapeDataString(appName))
@@ -72,8 +80,14 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
         var session = new NostrConnectSession(Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)), challenge, uri, time.GetUtcNow() + timeout);
         _sessions[session.Id] = session;
 
+        if (connections.Count == 0)
+        {
+            Fail(session, "No relay is reachable. Try again later.");
+            return session;
+        }
+
         // Fire and forget: the session object carries the outcome, and RunAsync never throws.
-        _ = RunAsync(session, clientKey, secret, template, relays, timeout);
+        _ = RunAsync(session, clientKey, secret, template, connections, timeout);
         return session;
     }
 
@@ -87,17 +101,12 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
             if (s.Expires < cutoff) _sessions.TryRemove(id, out _);
     }
 
-    private async Task RunAsync(NostrConnectSession session, NostrKey clientKey, string secret, NostrEvent template, IReadOnlyList<string> relayUrls, TimeSpan timeout)
+    private async Task RunAsync(NostrConnectSession session, NostrKey clientKey, string secret, NostrEvent template, IReadOnlyList<RelayConnection> connections, TimeSpan timeout)
     {
         using var cts = new CancellationTokenSource(timeout);
         var ct = cts.Token;
-        var connections = new List<RelayConnection>();
         try
         {
-            foreach (var t in relayUrls.Select(u => TryConnectAsync(u, ct)))
-                if (await t is { } c) connections.Add(c);
-            if (connections.Count == 0) throw new InvalidOperationException("No relay is reachable.");
-
             const string sub = "nip46";
             var filter = new Dictionary<string, object>
             {
@@ -209,8 +218,9 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
         {
             return await RelayConnection.ConnectAsync(url, ct);
         }
-        catch (Exception e) when (e is not OperationCanceledException)
+        catch (Exception e)
         {
+            // Timeout included: a relay that is slow to connect is left out of the QR code.
             logger.LogWarning(e, "Cannot connect to relay {Relay}", url);
             return null;
         }

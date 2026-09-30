@@ -68,6 +68,34 @@ public sealed class NostrConnectTests : IAsyncLifetime
     }
 
     [SkippableFact]
+    public async Task Dead_relay_is_left_out_of_the_QR_code()
+    {
+        Skip.If(Nak.Path is null, "nak is not installed");
+        // Port 1 refuses connections: a relay that is down, listed first.
+        await using var app = await TestApp.StartAsync(o => o.NostrConnectRelays = ["ws://127.0.0.1:1", _relay]);
+        var browser = app.NewBrowser();
+        var page = await browser.OpenLoginPageAsync();
+        var session = (await (await browser.PostFormAsync(page.ConnectPath!, new() { ["state"] = page.State })).Content.ReadFromJsonAsync<StartResponse>())!;
+
+        Assert.DoesNotContain(Uri.EscapeDataString("ws://127.0.0.1:1"), session.Uri);
+        Assert.Contains("relay=" + Uri.EscapeDataString(_relay), session.Uri);
+    }
+
+    [SkippableFact]
+    public async Task No_reachable_relay_fails_with_a_message()
+    {
+        Skip.If(Nak.Path is null, "nak is not installed");
+        await using var app = await TestApp.StartAsync(o => o.NostrConnectRelays = ["ws://127.0.0.1:1"]);
+        var browser = app.NewBrowser();
+        var page = await browser.OpenLoginPageAsync();
+        var session = (await (await browser.PostFormAsync(page.ConnectPath!, new() { ["state"] = page.State })).Content.ReadFromJsonAsync<StartResponse>())!;
+        var poll = await (await browser.GetAsync($"{page.ConnectPath}/{session.Id}")).Content.ReadFromJsonAsync<PollResponse>();
+
+        Assert.Equal("Failed", poll!.Status);
+        Assert.Contains("No relay is reachable", poll.Error);
+    }
+
+    [SkippableFact]
     public async Task Sessions_are_limited()
     {
         Skip.If(Nak.Path is null, "nak is not installed");

@@ -68,3 +68,31 @@ public sealed class ProfileFetcherTests : IDisposable
         public HttpClient CreateClient(string name) => new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(3) };
     }
 }
+
+public class PublicOnlyHttpHandlerTests
+{
+    [Theory]
+    [InlineData("127.0.0.1", false)]
+    [InlineData("10.1.2.3", false)]
+    [InlineData("172.16.0.1", false)]
+    [InlineData("172.32.0.1", true)]
+    [InlineData("192.168.1.1", false)]
+    [InlineData("169.254.169.254", false)]
+    [InlineData("100.64.0.1", false)]
+    [InlineData("::1", false)]
+    [InlineData("fd00::1", false)]
+    [InlineData("fe80::1", false)]
+    [InlineData("::ffff:127.0.0.1", false)]
+    [InlineData("1.1.1.1", true)]
+    [InlineData("2606:4700:4700::1111", true)]
+    public void Only_public_addresses_pass(string ip, bool expected) =>
+        Assert.Equal(expected, NostrAuth.Relays.PublicOnlyHttpHandler.IsPublic(System.Net.IPAddress.Parse(ip)));
+
+    [Fact]
+    public async Task Name_that_resolves_to_loopback_is_refused()
+    {
+        // "localhost" resolves to 127.0.0.1 / ::1. The handler checks the resolved address.
+        using var client = new HttpClient(NostrAuth.Relays.PublicOnlyHttpHandler.Create());
+        await Assert.ThrowsAsync<HttpRequestException>(() => client.GetAsync("http://localhost:1/"));
+    }
+}

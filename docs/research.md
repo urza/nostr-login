@@ -185,7 +185,8 @@ These came up while building and testing the demos (2026-09-29).
 4. **A NIP-46 `connect` reply proves nothing about the user.** The remote-signer key can differ from the user key. Only the signed challenge event counts. The `secret` in the `nostrconnect://` URI must be checked, or anyone who watches the relay can answer first.
 5. **ASP.NET Core Identity UI needs one page override.** The built-in "external login, new account" page requires an email. A Nostr key has no email, so Demo 2 overrides `Account/ExternalLogin` to make the email optional and to use the `npub` as the user name. Linking, unlinking and "this key belongs to another account" work with no changes.
 6. **Browsers share cookies across ports.** All demos run on `localhost`, so two apps with the default cookie name overwrite each other's session. Each demo sets its own cookie name. This is a demo issue only, not a production issue.
-7. **Remote-authentication defaults do not fit a same-site flow.** ASP.NET Core sets `SameSite=None; Secure` on correlation cookies because OAuth callbacks come from another site. The Nostr login POST comes from the app's own page, so the handler uses `SameSite=Lax`. This also makes plain-http development work.
+7. **Primal answered only on the first relay of the QR code.** In three tries with Primal for iPhone, the login worked only when the first relay in the `nostrconnect://` URI was one that the server could reach. The server now connects to the relays first and puts only the reachable ones into the URI.
+8. **Remote-authentication defaults do not fit a same-site flow.** ASP.NET Core sets `SameSite=None; Secure` on correlation cookies because OAuth callbacks come from another site. The Nostr login POST comes from the app's own page, so the handler uses `SameSite=Lax`. This also makes plain-http development work.
 
 ## 10. Signers on iPhone (checked 2026-09-30)
 

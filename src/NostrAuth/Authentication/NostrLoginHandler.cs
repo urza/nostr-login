@@ -30,6 +30,9 @@ public sealed class NostrLoginHandler(
     TimeProvider time)
     : RemoteAuthenticationHandler<NostrLoginOptions>(options, logger, encoder)
 {
+    // Empty counts as "not set": an empty environment variable must not produce a relative URL.
+    private string Origin => string.IsNullOrWhiteSpace(Options.PublicOrigin) ? $"{Request.Scheme}://{Request.Host}" : Options.PublicOrigin.TrimEnd('/');
+
     private const string ChallengeKey = ".nostr.challenge";
     private const string ConnectSegment = "/connect";
 
@@ -37,7 +40,7 @@ public sealed class NostrLoginHandler(
 
     /// <summary>The exact URL that the signed event must name in its <c>u</c> tag.</summary>
     private string CallbackUrl =>
-        (Options.PublicOrigin?.TrimEnd('/') ?? $"{Request.Scheme}://{Request.Host}") + OriginalPathBase + Options.CallbackPath;
+        Origin + OriginalPathBase + Options.CallbackPath;
 
     protected override Task HandleChallengeAsync(AuthenticationProperties properties)
     {
@@ -106,8 +109,8 @@ public sealed class NostrLoginHandler(
         }
 
         var template = Nip98.CreateTemplate(CallbackUrl, HttpMethods.Post, time.GetUtcNow(), challenge);
-        var origin = Options.PublicOrigin ?? $"{Request.Scheme}://{Request.Host}";
-        var session = nostrConnect.Start(template, [.. Options.NostrConnectRelays], Options.AppName, origin, Options.NostrConnectTimeout, Options.MaxNostrConnectSessions);
+        var origin = Origin;
+        var session = await nostrConnect.StartAsync(template, [.. Options.NostrConnectRelays], Options.AppName, origin, Options.NostrConnectTimeout, Options.MaxNostrConnectSessions);
         if (session is null)
         {
             Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
