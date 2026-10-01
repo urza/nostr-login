@@ -115,6 +115,43 @@ public sealed class RelayConnection : IAsyncDisposable
         message is [{ ValueKind: JsonValueKind.String } type, { ValueKind: JsonValueKind.String } sub, ..]
         && type.GetString() == "EOSE" && sub.GetString() == subscriptionId;
 
+    /// <summary>True for <c>["OK", id, false, reason]</c>: the relay refused an event that we published.</summary>
+    public static bool IsRejectedOk(JsonElement[] message, out string reason)
+    {
+        if (message is [{ ValueKind: JsonValueKind.String } type, _, { ValueKind: JsonValueKind.False }, .. var rest] && type.GetString() == "OK")
+        {
+            reason = rest is [{ ValueKind: JsonValueKind.String } r, ..] ? r.GetString()! : "";
+            return true;
+        }
+        reason = "";
+        return false;
+    }
+
+    /// <summary>True for <c>["CLOSED", subId, reason]</c>: the relay ended our subscription, for example "auth-required: ...".</summary>
+    public static bool IsClosed(JsonElement[] message, string subscriptionId, out string reason)
+    {
+        if (message is [{ ValueKind: JsonValueKind.String } type, { ValueKind: JsonValueKind.String } sub, .. var rest]
+            && type.GetString() == "CLOSED" && sub.GetString() == subscriptionId)
+        {
+            reason = rest is [{ ValueKind: JsonValueKind.String } r, ..] ? r.GetString()! : "";
+            return true;
+        }
+        reason = "";
+        return false;
+    }
+
+    /// <summary>True for <c>["NOTICE", text]</c>, a human-readable message from the relay.</summary>
+    public static bool IsNotice(JsonElement[] message, out string text)
+    {
+        if (message is [{ ValueKind: JsonValueKind.String } type, { ValueKind: JsonValueKind.String } t, ..] && type.GetString() == "NOTICE")
+        {
+            text = t.GetString()!;
+            return true;
+        }
+        text = "";
+        return false;
+    }
+
     public async ValueTask DisposeAsync()
     {
         _cts.Cancel();

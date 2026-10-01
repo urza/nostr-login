@@ -99,7 +99,7 @@ All settings are environment variables. Lists use `__0`, `__1` and so on.
 |---|---|---|
 | `Nostr__PublicOrigin` | request scheme and host | Public address, for example `https://guestbook.example.com`. Needed behind a proxy that changes the host or does not send `X-Forwarded-Proto`. |
 | `ASPNETCORE_FORWARDEDHEADERS_ENABLED` | `true` in the image, `false` with `dotnet run` | Reads `X-Forwarded-Proto` and `X-Forwarded-For`, so the app sees the public scheme and the real client IP (for rate limits). Set `false` when the container port is reachable directly, because the headers are trusted from any client. |
-| `Nostr__NostrConnectRelays__0`, `__1`, ... | `nos.lol`, `relay.primal.net`, `nostr.mom` | Relays for the QR-code login. The QR code lists only the relays that the server could reach, in this order. |
+| `Nostr__NostrConnectRelays__0`, `__1`, ... | `relay.primal.net`, `relay.nsec.app`, `theforest.nostr1.com`, `nostr.oxtr.dev`, `nostr.cypherpunk.today` | Relays for the QR-code login: the relays that signer apps use for NIP-46, not general-purpose relays. The QR code lists only the relays that the server could reach, in this order. |
 | `Nostr__ProfileRelays__0`, `__1`, ... | `purplepag.es`, `relay.primal.net`, `relay.damus.io`, `nos.lol` | Relays for names and pictures. |
 | `Guestbook__DataDirectory` | `/data` in Docker | Folder for the database and the cookie keys. |
 | `ASPNETCORE_HTTP_PORTS` | `8080` | Port inside the container. |
@@ -168,7 +168,7 @@ Main options of `AddNostr()`:
 |---|---|---|
 | `CallbackPath` | `/signin-nostr` | The login page (GET) and the login POST. |
 | `PublicOrigin` | request scheme and host | Set it behind a proxy. |
-| `NostrConnectRelays` | `nos.lol`, `relay.primal.net`, `nostr.mom` | Empty list turns the QR code option off. Use your own relay if you can. |
+| `NostrConnectRelays` | `relay.primal.net`, `relay.nsec.app`, `theforest.nostr1.com`, `nostr.oxtr.dev`, `nostr.cypherpunk.today` | Empty list turns the QR code option off. Use your own relay if you can. |
 | `MaxNostrConnectSessions` | 100 | Active NIP-46 sessions per instance. |
 | `ProfileRelays` | `purplepag.es`, `relay.primal.net`, `relay.damus.io`, `nos.lol` | Empty list turns the profile lookup during login off. |
 | `AllowManualEvent` | `true` | The "Sign manually" box. |

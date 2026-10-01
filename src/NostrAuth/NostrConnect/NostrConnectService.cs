@@ -29,6 +29,8 @@ public sealed class NostrConnectSession
     public string? AuthUrl { get; internal set; }
     public string? SignedEventJson { get; internal set; }
     public string? Error { get; internal set; }
+    /// <summary>The last complaint from a relay (a refused event or a closed subscription). Shown with a timeout.</summary>
+    internal string? RelayError { get; set; }
 
     /// <summary>Stops the relay work when a newer attempt replaces this one.</summary>
     internal CancellationTokenSource Stop { get; } = new();
@@ -52,6 +54,10 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
     public const int Kind = 24133;
     private const string Sub = "nip46";
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(15);
+    // How often a request without a reply goes out again (see "pending" in RunAsync). Short, so a
+    // signer whose clock runs a few seconds ahead gets the request as soon as the server's
+    // created_at passes its "since"; and each copy is one tiny event.
+    private static readonly TimeSpan ResendInterval = TimeSpan.FromSeconds(3);
     private readonly ConcurrentDictionary<string, NostrConnectSession> _sessions = new();
 
     /// <param name="template">Unsigned login event with a <c>challenge</c> tag. Its <c>created_at</c> is replaced at signing time.</param>
@@ -79,7 +85,9 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
         // Connect first, and put only the relays that answered into the URI. In tests, Primal
         // answered only on the first relay of the URI; if that relay is down (or blocked for this
         // server), the login would hang with no error. Order stays as configured.
-        using var connectTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        // The user waits this long for the QR code when one relay is down without a TCP reset.
+        // Good relays connect well under a second.
+        using var connectTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
         var attempts = await Task.WhenAll(relays.Select(u => TryConnectAsync(u, connectTimeout.Token)));
         var connections = attempts.OfType<RelayConnection>().ToList();
         for (var i = 0; i < relays.Count; i++)
@@ -129,37 +137,83 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
         var filter = new Dictionary<string, object> { ["kinds"] = new[] { Kind }, ["#p"] = new[] { clientKey.PublicKeyHex } };
         var live = new ConcurrentDictionary<string, RelayConnection>();
         var incoming = Channel.CreateUnbounded<NostrEvent>();
-        var relayTasks = connections.Select(c => KeepRelayAsync(session, c.Url.OriginalString, c, filter, live, incoming.Writer, ct)).ToArray();
 
-        async Task<string> RequestAsync(string signerPubKey, byte[] conversationKey, string method, string[] parameters)
+        // The request that waits for a reply. Kind 24133 is ephemeral: a relay does not store it,
+        // so a signer that is not subscribed at that moment never sees it, and there is no second
+        // chance. Amber does exactly that: it subscribes after it answers "connect", and with
+        // "since" set to the phone's clock, so a request sent at once with the server's clock can
+        // fall before "since". So the pending request goes out again: to every relay that
+        // (re)connects, and on a timer as a fresh event while Resend is set (get_public_key, which
+        // the signer answers without a prompt). sign_event goes out again only as the same event,
+        // same id: a fresh copy could show the user a second approval prompt.
+        PendingRequest? pending = null;
+
+        async Task PublishAsync(RelayConnection c, NostrEvent evt)
         {
-            var id = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8));
-            var request = JsonSerializer.Serialize(new { id, method, @params = parameters });
-            var evt = new NostrEvent
+            try
             {
-                Kind = Kind,
-                CreatedAt = time.GetUtcNow().ToUnixTimeSeconds(),
-                Tags = [["p", signerPubKey]],
-                Content = Nip44.Encrypt(request, conversationKey),
-            }.Sign(clientKey);
+                await c.PublishAsync(evt, ct);
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                logger.LogInformation("Nostr Connect {Id}: publish to {Relay} failed: {Error}", session.Id, c.Url, e.Message);
+            }
+        }
+
+        async Task SendAsync(PendingRequest p, IEnumerable<RelayConnection> relays, bool fresh)
+        {
+            if (fresh || p.Event is null)
+            {
+                var request = JsonSerializer.Serialize(new { id = p.Id, method = p.Method, @params = p.Parameters });
+                p.Event = new NostrEvent
+                {
+                    Kind = Kind,
+                    CreatedAt = time.GetUtcNow().ToUnixTimeSeconds(),
+                    Tags = [["p", p.SignerPubKey]],
+                    Content = Nip44.Encrypt(request, p.ConversationKey),
+                }.Sign(clientKey);
+            }
             // One logical request: the same event to every live relay. The signer may get it twice.
-            foreach (var c in live.Values)
+            foreach (var c in relays) await PublishAsync(c, p.Event);
+        }
+
+        async Task<PendingRequest> RequestAsync(string signerPubKey, byte[] conversationKey, string method, string[] parameters, bool resend)
+        {
+            var p = new PendingRequest(Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)), method, parameters, signerPubKey, conversationKey) { Resend = resend };
+            pending = p;
+            await SendAsync(p, live.Values, fresh: true);
+            return p;
+        }
+
+        // A relay that comes (back) gets the pending request at once. See "pending" above.
+        Task OnRelayLiveAsync(RelayConnection c) => pending is { } p ? SendAsync(p, [c], fresh: false) : Task.CompletedTask;
+
+        async Task ResendLoopAsync()
+        {
+            try
             {
-                try
+                while (true)
                 {
-                    await c.PublishAsync(evt, ct);
-                }
-                catch (Exception e) when (e is not OperationCanceledException)
-                {
-                    logger.LogInformation("Nostr Connect {Id}: publish to {Relay} failed: {Error}", session.Id, c.Url, e.Message);
+                    await Task.Delay(ResendInterval, ct);
+                    if (pending is { Resend: true } p)
+                    {
+                        logger.LogDebug("Nostr Connect {Id}: no reply to {Method} yet, sending it again", session.Id, p.Method);
+                        await SendAsync(p, live.Values, fresh: true);
+                    }
                 }
             }
-            return id;
+            catch (OperationCanceledException)
+            {
+                // Session is over.
+            }
         }
+
+        var relayTasks = connections.Select(c => KeepRelayAsync(session, c.Url.OriginalString, c, filter, live, incoming.Writer, OnRelayLiveAsync, ct))
+            .Append(ResendLoopAsync()).ToArray();
 
         try
         {
-            string? signerPubKey = null, userPubKey = null, pendingId = null;
+            string? signerPubKey = null, userPubKey = null;
             byte[]? conversationKey = null;
 
             // The same reply arrives once per relay. The state checks below make duplicates harmless.
@@ -205,14 +259,16 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
                     signerPubKey = evt.PubKey;
                     conversationKey = key;
                     session.Status = NostrConnectStatus.WaitingForSignature;
-                    pendingId = await RequestAsync(signerPubKey, conversationKey, "get_public_key", []);
+                    await RequestAsync(signerPubKey, conversationKey, "get_public_key", [], resend: true);
                     continue;
                 }
 
-                if (reply.Id != pendingId) continue;
+                if (pending is null || reply.Id != pending.Id) continue;
                 if (reply.Result == "auth_url")
                 {
+                    // The signer has the request and waits for the user. No more copies.
                     session.AuthUrl = reply.Error;
+                    pending.Resend = false;
                     continue;
                 }
                 if (!string.IsNullOrEmpty(reply.Error)) throw new InvalidOperationException($"Signer refused: {reply.Error}");
@@ -224,7 +280,7 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
                     userPubKey = reply.Result!.ToLowerInvariant();
                     session.AuthUrl = null;
                     var unsigned = new { kind = template.Kind, content = template.Content, tags = template.Tags, created_at = time.GetUtcNow().ToUnixTimeSeconds() };
-                    pendingId = await RequestAsync(signerPubKey, conversationKey!, "sign_event", [JsonSerializer.Serialize(unsigned)]);
+                    await RequestAsync(signerPubKey, conversationKey!, "sign_event", [JsonSerializer.Serialize(unsigned)], resend: false);
                     continue;
                 }
 
@@ -235,6 +291,7 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
                 if (NostrEvent.TryParse(reply.Result) is not { } signed) throw new InvalidOperationException("Signer returned an invalid event.");
                 if (signed.PubKey != userPubKey) throw new InvalidOperationException("Signer signed with a different key than it named as your public key.");
 
+                pending = null;
                 session.SignedEventJson = reply.Result;
                 session.Status = NostrConnectStatus.Signed;
                 return;
@@ -242,9 +299,11 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
         }
         catch (OperationCanceledException)
         {
-            Fail(session, session.Status == NostrConnectStatus.WaitingForSigner
+            var why = session.Status == NostrConnectStatus.WaitingForSigner
                 ? "Timed out: the signer app did not answer. Try a new QR code."
-                : "Timed out while waiting for your approval in the signer app.");
+                : "Timed out while waiting for your approval in the signer app.";
+            // A relay that refused our events is the likely cause, and the user cannot see the server log.
+            Fail(session, session.RelayError is { } relayError ? $"{why} (Relay {relayError})" : why);
         }
         catch (Exception e)
         {
@@ -263,7 +322,7 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
     /// and a relay can drop the connection in that time; replies sent through it would be lost.
     /// </summary>
     private async Task KeepRelayAsync(NostrConnectSession session, string url, RelayConnection? connection, object filter,
-        ConcurrentDictionary<string, RelayConnection> live, ChannelWriter<NostrEvent> incoming, CancellationToken ct)
+        ConcurrentDictionary<string, RelayConnection> live, ChannelWriter<NostrEvent> incoming, Func<RelayConnection, Task> onLive, CancellationToken ct)
     {
         var backoff = TimeSpan.FromSeconds(1);
         while (!ct.IsCancellationRequested)
@@ -275,8 +334,33 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
                     await connection.SubscribeAsync(Sub, filter, ct);
                     live[url] = connection;
                     backoff = TimeSpan.FromSeconds(1);
+                    await onLive(connection);
                     await foreach (var msg in connection.Messages.ReadAllAsync(ct))
-                        if (RelayConnection.GetEvent(msg, Sub) is { } evt) incoming.TryWrite(evt);
+                    {
+                        if (RelayConnection.GetEvent(msg, Sub) is { } evt)
+                        {
+                            incoming.TryWrite(evt);
+                        }
+                        else if (RelayConnection.IsRejectedOk(msg, out var reason))
+                        {
+                            // Without this, a relay that blocks new pubkeys or rate-limits kind 24133
+                            // looks exactly like a signer that never answers.
+                            logger.LogWarning("Nostr Connect {Id}: relay {Relay} refused our event: {Reason}", session.Id, url, reason);
+                            session.RelayError = $"{url} refused the request: {reason}";
+                        }
+                        else if (RelayConnection.IsClosed(msg, Sub, out var why))
+                        {
+                            // The relay will not deliver to us (for example "auth-required"). A reconnect
+                            // would get the same answer, so this relay is out for the rest of the session.
+                            logger.LogWarning("Nostr Connect {Id}: relay {Relay} closed our subscription: {Reason}", session.Id, url, why);
+                            session.RelayError = $"{url} closed the subscription: {why}";
+                            return;
+                        }
+                        else if (RelayConnection.IsNotice(msg, out var text))
+                        {
+                            logger.LogDebug("Nostr Connect {Id}: notice from {Relay}: {Text}", session.Id, url, text);
+                        }
+                    }
                 }
                 catch (Exception e) when (e is not OperationCanceledException)
                 {
@@ -338,6 +422,20 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
     }
 
     private sealed record Reply(string? Id, string? Result, string? Error);
+
+    /// <summary>A NIP-46 request without a reply yet. See "pending" in <see cref="RunAsync"/>.</summary>
+    private sealed class PendingRequest(string id, string method, string[] parameters, string signerPubKey, byte[] conversationKey)
+    {
+        public string Id => id;
+        public string Method => method;
+        public string[] Parameters => parameters;
+        public string SignerPubKey => signerPubKey;
+        public byte[] ConversationKey => conversationKey;
+        /// <summary>The event that carried the request last. Sent as-is to a relay that (re)connects.</summary>
+        public NostrEvent? Event { get; set; }
+        /// <summary>Send fresh copies on a timer until the reply comes. Only for requests that the signer answers without a prompt.</summary>
+        public bool Resend { get; set; }
+    }
 
     private static Reply? TryReadReply(string content, byte[] conversationKey)
     {

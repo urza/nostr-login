@@ -21,8 +21,14 @@ internal sealed class FakeSigner(NostrKey user) : IAsyncDisposable
     /// <summary>The key that signs the requested events. Normally the user key.</summary>
     public NostrKey? SignWith { get; init; }
 
-    /// <summary>Added to created_at of every event this signer sends.</summary>
+    /// <summary>The phone's clock: added to created_at of every event this signer sends, and to "since" (see <see cref="SubscribeWithSince"/>).</summary>
     public TimeSpan ClockSkew { get; init; }
+
+    /// <summary>Amber: the subscription for requests is made this long after the connect reply, not before it.</summary>
+    public TimeSpan SubscribeDelay { get; init; }
+
+    /// <summary>Amber: the subscription filter has "since" = the phone's clock at subscribe time.</summary>
+    public bool SubscribeWithSince { get; init; }
 
     public List<string> Methods { get; } = [];
 
@@ -36,10 +42,22 @@ internal sealed class FakeSigner(NostrKey user) : IAsyncDisposable
         var secret = query["secret"]!;
 
         _relay = await RelayConnection.ConnectAsync(relayUrl, _cts.Token);
-        await _relay.SubscribeAsync("s", new Dictionary<string, object> { ["kinds"] = new[] { 24133 }, ["#p"] = new[] { SignerKey.PublicKeyHex } }, _cts.Token);
         var key = Nip44.ConversationKey(SignerKey, clientPubKey);
         _loop = ServeAsync(clientPubKey, key);
+        if (SubscribeDelay == TimeSpan.Zero) await SubscribeAsync();
         await SendAsync(clientPubKey, key, new { id = Guid.NewGuid().ToString(), result = secret });
+        if (SubscribeDelay != TimeSpan.Zero)
+        {
+            await Task.Delay(SubscribeDelay);
+            await SubscribeAsync();
+        }
+    }
+
+    private Task SubscribeAsync()
+    {
+        var filter = new Dictionary<string, object> { ["kinds"] = new[] { 24133 }, ["#p"] = new[] { SignerKey.PublicKeyHex } };
+        if (SubscribeWithSince) filter["since"] = (DateTimeOffset.UtcNow + ClockSkew).ToUnixTimeSeconds();
+        return _relay!.SubscribeAsync("s", filter, _cts.Token);
     }
 
     private async Task ServeAsync(string clientPubKey, byte[] key)

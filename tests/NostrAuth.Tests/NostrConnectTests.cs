@@ -178,6 +178,37 @@ public sealed class NostrConnectTests : IAsyncLifetime
     }
 
     [SkippableFact]
+    public async Task Signer_that_subscribes_after_its_connect_reply_still_gets_the_request()
+    {
+        Skip.If(Nak.Path is null, "nak is not installed");
+        await using var app = await TestApp.StartAsync(o => o.NostrConnectRelays = [_relay]);
+        var (browser, page, session) = await ShowQrAsync(app);
+
+        // Amber answers "connect" first and subscribes for requests afterwards. Kind 24133 is not
+        // stored, so the first get_public_key is lost; the server must send it again.
+        await using var signer = new FakeSigner(_user) { SubscribeDelay = TimeSpan.FromSeconds(2) };
+        await signer.ConnectAsync(session.Uri);
+
+        Assert.Equal("Signed", (await WaitForResultAsync(browser, page, session.Id)).Status);
+        Assert.Equal("sign_event", signer.Methods.Last());
+    }
+
+    [SkippableFact]
+    public async Task Signer_with_a_clock_ahead_and_a_since_filter_still_gets_the_request()
+    {
+        Skip.If(Nak.Path is null, "nak is not installed");
+        await using var app = await TestApp.StartAsync(o => o.NostrConnectRelays = [_relay]);
+        var (browser, page, session) = await ShowQrAsync(app);
+
+        // Amber subscribes with "since" = the phone's clock. A phone 5 s ahead of the server makes
+        // the relay drop every request whose created_at is older than that; later copies pass.
+        await using var signer = new FakeSigner(_user) { ClockSkew = TimeSpan.FromSeconds(5), SubscribeWithSince = true };
+        await signer.ConnectAsync(session.Uri);
+
+        Assert.Equal("Signed", (await WaitForResultAsync(browser, page, session.Id)).Status);
+    }
+
+    [SkippableFact]
     public async Task Signer_that_signs_with_another_key_is_refused()
     {
         Skip.If(Nak.Path is null, "nak is not installed");

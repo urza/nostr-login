@@ -51,10 +51,15 @@ public class NostrLoginOptions : RemoteAuthenticationOptions
 
     /// <summary>
     /// Relays for NIP-46 (Nostr Connect). Empty list: the QR code option is off. Several relays, because
-    /// public relays go down. Each default passed a kind-24133 round trip on 2026-09-30. Not in the list:
-    /// relay.damus.io accepted kind-24133 events but never delivered them, and relay.nsec.app was down.
+    /// public relays go down. These are the relays that signer apps and NIP-46 clients use themselves,
+    /// not general-purpose relays: relay.primal.net first, because Primal answers only on the first
+    /// relay of the URI; relay.nsec.app is the nsec.app signer's own relay; the others are known to
+    /// carry kind 24133 reliably. All except relay.nsec.app (not reachable from the test network)
+    /// passed a kind-24133 round trip from a fresh key on 2026-10-01. Not in the list: relay.damus.io
+    /// accepted kind-24133 events but never delivered them.
     /// </summary>
-    public IList<string> NostrConnectRelays { get; set; } = ["wss://nos.lol", "wss://relay.primal.net", "wss://nostr.mom"];
+    public IList<string> NostrConnectRelays { get; set; } =
+        ["wss://relay.primal.net", "wss://relay.nsec.app", "wss://theforest.nostr1.com", "wss://nostr.oxtr.dev", "wss://nostr.cypherpunk.today"];
 
     public TimeSpan NostrConnectTimeout { get; set; } = TimeSpan.FromMinutes(5);
 
