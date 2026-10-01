@@ -253,9 +253,11 @@
     return `Signer connected${via}.${req}${hint}`;
   };
   const li = (parent, text, cls) => { const el = document.createElement('li'); if (cls) el.className = cls; el.textContent = text; parent.appendChild(el); return el; };
-  const renderDetails = s => {
+  const renderDetails = (id, s) => {
     const relays = $('connect-relays');
     relays.replaceChildren();
+    // The session id matches the "Nostr Connect <id>" lines in the server log.
+    li(relays, `Session ${id.slice(0, 8)}`);
     for (const r of s.relays) {
       const cls = r.state === 'listening' ? (r.detail && r.detail.startsWith('refused') ? 'bad' : 'ok') : r.state === 'connected' ? '' : 'bad';
       li(relays, `${r.url.replace(/^wss?:\/\//, '')}: ${r.state}${r.detail ? ' (' + r.detail + ')' : ''}`, cls);
@@ -285,7 +287,7 @@
       return;
     }
     if (gen !== generation) return;
-    renderDetails(s);
+    renderDetails(id, s);
     if (s.status === 'Signed') { forget(); $('connect-status').textContent = 'Signed. Logging in…'; submit(s.event); return; }
     if (s.status === 'Failed') {
       forget();

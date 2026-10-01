@@ -21,6 +21,9 @@ internal sealed class FakeSigner(NostrKey user) : IAsyncDisposable
     /// <summary>The key that signs the requested events. Normally the user key.</summary>
     public NostrKey? SignWith { get; init; }
 
+    /// <summary>The key that authors and encrypts the replies after the connect reply, when it differs from <see cref="SignerKey"/>.</summary>
+    public NostrKey? ReplyWith { get; init; }
+
     /// <summary>The phone's clock: added to created_at of every event this signer sends, and to "since" (see <see cref="SubscribeWithSince"/>).</summary>
     public TimeSpan ClockSkew { get; init; }
 
@@ -83,7 +86,8 @@ internal sealed class FakeSigner(NostrKey user) : IAsyncDisposable
                     "sign_event" => new { id, result = Sign(request.RootElement.GetProperty("params")[0].GetString()!) },
                     _ => new { id, result = "", error = "not supported" },
                 };
-                await SendAsync(clientPubKey, key, reply);
+                if (ReplyWith is { } other) await SendAsync(clientPubKey, Nip44.ConversationKey(other, clientPubKey), reply, other);
+                else await SendAsync(clientPubKey, key, reply);
                 if (method == "get_public_key" && SleepAfterGetPublicKey != TimeSpan.Zero)
                 {
                     await _relay.SendAsync(["CLOSE", "s"], _cts.Token);
@@ -110,14 +114,14 @@ internal sealed class FakeSigner(NostrKey user) : IAsyncDisposable
         }.Sign(SignWith ?? user).ToJson();
     }
 
-    private Task SendAsync(string clientPubKey, byte[] key, object reply) =>
+    private Task SendAsync(string clientPubKey, byte[] key, object reply, NostrKey? author = null) =>
         _relay!.PublishAsync(new NostrEvent
         {
             Kind = 24133,
             CreatedAt = (DateTimeOffset.UtcNow + ClockSkew).ToUnixTimeSeconds(),
             Tags = [["p", clientPubKey]],
             Content = Nip44.Encrypt(JsonSerializer.Serialize(reply), key),
-        }.Sign(SignerKey), _cts.Token);
+        }.Sign(author ?? SignerKey), _cts.Token);
 
     public async ValueTask DisposeAsync()
     {

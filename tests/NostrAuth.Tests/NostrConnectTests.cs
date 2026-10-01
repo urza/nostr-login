@@ -239,6 +239,25 @@ public sealed class NostrConnectTests : IAsyncLifetime
     }
 
     [SkippableFact]
+    public async Task Signer_that_replies_from_another_key_than_its_connect_reply_still_logs_in()
+    {
+        Skip.If(Nak.Path is null, "nak is not installed");
+        await using var app = await TestApp.StartAsync(o => o.NostrConnectRelays = [_relay]);
+        var (browser, page, session) = await ShowQrAsync(app);
+
+        // The connect reply comes from one key, every later reply from another. The replies still
+        // decrypt with their author's key and carry our request ids, so they are the signer's.
+        // Before, they were dropped without a word: "the signer signed, but nothing happened".
+        await using var signer = new FakeSigner(_user) { ReplyWith = NostrKey.Generate() };
+        await signer.ConnectAsync(session.Uri);
+        var result = await WaitForResultAsync(browser, page, session.Id);
+
+        Assert.Equal("Signed", result.Status);
+        Assert.Contains(result.Timeline!, e => e.Text.StartsWith("Reply from") && e.Text.Contains("Accepted"));
+        Assert.Equal(HttpStatusCode.Redirect, (await browser.SubmitAsync(page, NostrEvent.TryParse(result.Event)!)).StatusCode);
+    }
+
+    [SkippableFact]
     public async Task Signer_that_signs_with_another_key_is_refused()
     {
         Skip.If(Nak.Path is null, "nak is not installed");
@@ -270,6 +289,27 @@ public sealed class NostrConnectTests : IAsyncLifetime
         await using var signer = new FakeSigner(_user);
         await signer.ConnectAsync(second.Uri);
         Assert.Equal("Signed", (await WaitForResultAsync(browser, page, second.Id)).Status);
+    }
+
+    [SkippableFact]
+    public async Task Signature_for_an_older_attempt_of_the_same_login_page_logs_the_newer_one_in()
+    {
+        Skip.If(Nak.Path is null, "nak is not installed");
+        await using var app = await TestApp.StartAsync(o => o.NostrConnectRelays = [_relay]);
+        var (browser, page, first) = await ShowQrAsync(app);
+
+        // The signer connects and sleeps before it gets sign_event, like an app that lost its
+        // relay connection. Meanwhile the page starts over ("New QR code", or a reload without
+        // session storage) and polls a new attempt. The signer then signs the old request.
+        await using var signer = new FakeSigner(_user) { SleepAfterGetPublicKey = TimeSpan.FromSeconds(3) };
+        await signer.ConnectAsync(first.Uri);
+        await Task.Delay(1000);
+        var second = await ShowQrAsync(browser, page);
+
+        var result = await WaitForResultAsync(browser, page, second.Id);
+        Assert.Equal("Signed", result.Status);
+        Assert.Equal(_user.PublicKeyHex, NostrEvent.TryParse(result.Event)!.PubKey);
+        Assert.Equal(HttpStatusCode.Redirect, (await browser.SubmitAsync(page, NostrEvent.TryParse(result.Event)!)).StatusCode);
     }
 
     [SkippableFact]

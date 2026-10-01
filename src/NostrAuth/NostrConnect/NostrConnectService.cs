@@ -116,6 +116,14 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
         var active = _sessions.Values.Where(s => s.IsActive).ToList();
         foreach (var old in active.Where(s => s.Challenge == challenge))
         {
+            // An old attempt whose signer is connected may still get its signature: the user
+            // approved it in the app while the page started over (a reload without session
+            // storage, "New QR code"). It stays, and Get hands its result to the new attempt.
+            if (old.Status == NostrConnectStatus.WaitingForSignature)
+            {
+                logger.LogInformation("Nostr Connect {Id}: a new QR code for the same login page; this attempt stays, its signer is connected", old.Id);
+                continue;
+            }
             logger.LogInformation("Nostr Connect {Id}: replaced by a new QR code for the same login page", old.Id);
             Cancel(old, "Replaced by a new QR code.");
         }
@@ -205,7 +213,24 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
         return session;
     }
 
-    public NostrConnectSession? Get(string id) => _sessions.TryGetValue(id, out var s) ? s : null;
+    /// <summary>
+    /// The session to show for this id. When another attempt of the same login page was signed
+    /// in the meantime, that one: the signed event names this page's challenge, so it logs the
+    /// page in all the same, and the signer app's "signed" is not lost.
+    /// </summary>
+    public NostrConnectSession? Get(string id)
+    {
+        if (!_sessions.TryGetValue(id, out var s)) return null;
+        if (s.Status == NostrConnectStatus.Signed) return s;
+        var signed = _sessions.Values.FirstOrDefault(o => o.Challenge == s.Challenge && o.Status == NostrConnectStatus.Signed);
+        if (signed is null) return s;
+        if (s.IsActive)
+        {
+            Note(signed, "An older attempt of this login page was signed. Its result is used.");
+            Cancel(s, "Another attempt of this login page was signed.");
+        }
+        return signed;
+    }
 
     /// <summary>A line for the server log and for the "Connection details" on the login page.</summary>
     private void Note(NostrConnectSession session, string text)
@@ -333,7 +358,11 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
             {
                 logger.LogDebug("Nostr Connect {Id}: event {EventId} kind {Kind} from {PubKey}, created_at {CreatedAt}, via {Relay}",
                     session.Id, evt.Id, evt.Kind, evt.PubKey, evt.CreatedAt, relay);
-                if (evt.Kind != Kind || !evt.Tags.Any(t => t is ["p", var p, ..] && p == clientKey.PublicKeyHex)) continue;
+                if (evt.Kind != Kind || !evt.Tags.Any(t => t is ["p", var p, ..] && p == clientKey.PublicKeyHex))
+                {
+                    Note(session, $"Dropped an event of kind {evt.Kind} from {Short(evt.PubKey)} via {relay}: not addressed to this login.");
+                    continue;
+                }
                 // Signer apps differ in small ways. Log each dropped reply with its reason,
                 // or a login that "does nothing" cannot be diagnosed.
                 if (!evt.VerifySignature())
@@ -341,10 +370,24 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
                     Note(session, $"Dropped an event with a bad signature from {Short(evt.PubKey)} via {relay}.");
                     continue;
                 }
-                if (signerPubKey is not null && evt.PubKey != signerPubKey) continue;
-
                 var key = conversationKey ?? Nip44.ConversationKey(clientKey, evt.PubKey);
-                if (TryReadReply(evt.Content, key) is not { } reply)
+                var reply = TryReadReply(evt.Content, key);
+                if (signerPubKey is not null && evt.PubKey != signerPubKey)
+                {
+                    // The pinned key is the key we encrypt requests to. A reply from another key is
+                    // still ours when it decrypts with that key and carries a pending request id:
+                    // only the signer that received the request knows the id. A signer may answer
+                    // with a key other than the one that sent the connect reply, and a silent drop
+                    // here looked exactly like "the signer signed, but nothing happened".
+                    reply = TryReadReply(evt.Content, Nip44.ConversationKey(clientKey, evt.PubKey));
+                    if (reply is null || pending is null || !pending.Answers(reply.Id))
+                    {
+                        Note(session, $"Dropped an event from {Short(evt.PubKey)} via {relay}: not from the connected signer {Short(signerPubKey)}, and not a reply to our request.");
+                        continue;
+                    }
+                    Note(session, $"Reply from {Short(evt.PubKey)}, not from the connected signer key {Short(signerPubKey)}. Accepted: it answers our request.");
+                }
+                if (reply is null)
                 {
                     // NIP-46 requires NIP-44. A signer that still answers with NIP-04 ("?iv=" in the
                     // content) can never complete this login; say so now instead of a 5-minute wait.
