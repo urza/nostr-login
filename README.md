@@ -45,7 +45,7 @@ The login page offers three ways to sign:
 | Way | For whom | Tested with |
 |---|---|---|
 | Browser extension (NIP-07) | Desktop browsers with Alby, nos2x, Flamingo, Keys.band, or Nostash on iPhone Safari | nos2x |
-| Signer app (NIP-46, QR code) | Primal, Amber, nsec.app, Clave and other remote signers. The server does the NIP-46 part, so the page needs no Nostr JavaScript library. | Primal (iPhone), `nak bunker` |
+| Signer app (NIP-46, QR code) | Primal, Amber, nsec.app, Clave and other remote signers. The server does the NIP-46 part, so the page needs no Nostr JavaScript library. On a phone the page starts the session by itself and offers "Open signer app on this device" first; the QR code is for a signer on another device. | Primal (iPhone), `nak bunker` |
 | Sign manually | Developers. The page shows a ready `nak event ...` command. | `nak` |
 
 ## Nostr Guestbook

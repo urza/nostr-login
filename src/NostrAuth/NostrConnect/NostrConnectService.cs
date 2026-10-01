@@ -206,7 +206,7 @@ public sealed class NostrConnectService(ILogger<NostrConnectService> logger, Tim
         // The client key is new for each session and public, so it can be logged: it is the
         // key that the signer's events are addressed to.
         logger.LogInformation("Nostr Connect {Id}: started for {AppUrl} with client key {ClientPubKey}", session.Id, appUrl, clientKey.PublicKeyHex);
-        Note(session, $"Connected to {string.Join(", ", connections.Select(c => c.Url.Host))}. Waiting for the signer app to answer the QR code.");
+        Note(session, $"Connected to {string.Join(", ", connections.Select(c => c.Url.Host))}. Waiting for the signer app to connect.");
 
         // Fire and forget: the session object carries the outcome, and RunAsync never throws.
         _ = RunAsync(session, clientKey, secret, template, connections, filter, timeout);

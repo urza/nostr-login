@@ -89,3 +89,13 @@ All rows are [code]. Other findings:
 - On a timeout the page says which relays it could not reach.
 
 Differences that matter for us: their client is in the browser, so a backgrounded tab is their problem and the server is ours; they ask the signer for nothing that needs a prompt during login; their copies of a request get a new id after a `ping`, ours kept the same id (changed for `get_public_key` after this comparison); they list three relays and dropped the dead one.
+
+## 6. nostr-auth-middleware (HumanjavaEnterprises), checked 2026-10-01
+
+[nostr-auth-middleware](https://github.com/HumanjavaEnterprises/nostr-auth-middleware) is an Express router for Node (npm 0.6.0, MIT, last commit 2026-07-21, 5 stars, open issues are Dependabot only). [code]
+
+- One flow: `GET /challenge/:pubkey` gives a random challenge (one live challenge per pubkey; a new request deletes the old one), the client signs a **kind 22242** event with tags `p` and `challenge`, and `POST /verify` checks the signature, the kind, `created_at` (−300 s to +60 s), and that the challenge exists for that pubkey, then deletes it. It returns an HS256 JWT in the JSON body; the docs put it in `localStorage`. No cookie, no NIP-98 for APIs, no NIP-05, no relay code in `src/`.
+- NIP-46: a browser-side `Nip46AuthHandler` for `bunker://` only (the app supplies the relay transport). Each request is sent once with a 30 s timeout; no resend, no OK/CLOSED handling, no `auth_url`; replies it cannot decrypt are dropped silently. A `Nip46SignerMiddleware` makes the server a bunker over HTTP, the opposite role from ours. No `nostrconnect://`, no QR code.
+- Weak points found by reading the code (not tested): no origin or URL binding and the NIP-42 AUTH kind is reused, so a hostile relay or a phishing page can get a client that auto-signs AUTH to produce a valid login event; anyone can cancel a victim's pending challenge; the Supabase single-use check is a select followed by a delete, not atomic; several documented routes and options do not exist in the code.
+- Nothing in it bears on the phone/NIP-46 stall. Its NIP-46 client would time out on a rate-limited relay. Its silent drop of undecryptable replies is the blind spot that commit 3b16008 closed here.
+- Worth copying: its end-to-end tests without mocks, with rejection cases. Ours already reject a wrong kind, a wrong URL and a replay; the challenge is consumed with one atomic `TryRemove`.

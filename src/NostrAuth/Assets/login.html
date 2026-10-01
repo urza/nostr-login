@@ -34,10 +34,9 @@
   .connect-box { display: flex; flex-direction: column; gap: .5rem; margin-top: .5rem; }
   .qr { display: flex; justify-content: center; background: #fff; border-radius: 8px; padding: .5rem; }
   a.button { display: block; text-align: center; text-decoration: none; font: inherit; border-radius: 8px; padding: .6rem 1rem; background: var(--accent); color: var(--accent-text); }
-  /* On a phone the QR code is on the same screen as the camera would need to see, so the
-     "open the signer app on this device" button comes first there. */
-  @media (pointer: coarse) { .connect-open { order: -1; } }
+  .qr { margin-top: .5rem; }
   .qr svg { width: 100%; max-width: 260px; height: auto; }
+  #connect-qr-details summary { font-weight: 500; font-size: .92rem; color: var(--muted); }
   code, textarea, pre { font: .8rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
   pre, .uri { background: var(--code); border-radius: 6px; padding: .5rem; overflow-x: auto; white-space: pre-wrap; word-break: break-all; margin: .5rem 0; }
   textarea { width: 100%; min-height: 7rem; background: var(--code); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: .5rem; margin: .5rem 0; }
@@ -77,10 +76,15 @@
 
     <section class="method" id="connect-section" hidden>
       <h2>Signer app</h2>
-      <p>Amber, Primal, nsec.app or another NIP-46 signer: scan the QR code, or open the signer on this device. Then approve the request.</p>
+      <p id="connect-hint">Amber, Primal, nsec.app or another NIP-46 signer: scan the QR code, or open the signer on this device. Then approve the request.</p>
       <button id="connect-btn" type="button">Show QR code</button>
       <div id="connect-box" class="connect-box" hidden>
-        <div class="qr" id="connect-qr"></div>
+        <!-- On a phone the session starts by itself and the app link comes first; the QR code is
+             folded away, because the signer app is on this phone (see "phone" in the script). -->
+        <details id="connect-qr-details" open>
+          <summary id="connect-qr-summary">Scan the QR code with your signer app</summary>
+          <div class="qr" id="connect-qr"></div>
+        </details>
         <a id="connect-open" class="button connect-open" href="#">Open signer app on this device</a>
         <div class="row">
           <button id="connect-copy" type="button" class="secondary">Copy link</button>
@@ -188,6 +192,11 @@
   let generation = 0;
   let connectUri = '';
 
+  // A phone has the signer app on the same device: nobody scans a QR code there, so the session
+  // starts by itself, the app link comes first, and the QR code is folded away. A desktop shows
+  // the QR code on request, so a visitor who uses the extension costs the server no relay work.
+  const phone = matchMedia('(pointer: coarse)').matches;
+
   // The page remembers its session. On a phone the signer app comes to the front, and the
   // browser may discard this tab; the reloaded page must continue to poll the same server
   // session, or a signature that arrives later is lost. sessionStorage survives a tab reload.
@@ -201,6 +210,11 @@
     // The SVG comes from our own server (QRCoder), not from user input.
     $('connect-qr').innerHTML = session.qrSvg;
     $('connect-open').href = connectUri = session.uri;
+    $('connect-qr-details').open = !phone;
+    $('connect-qr-summary').textContent = phone ? 'QR code for a signer app on another device' : 'Scan the QR code with your signer app';
+    // The app link first on a phone. Moved in script, not with CSS "order": the two must agree
+    // with the "phone" decision above, and one source of truth keeps them in step.
+    if (phone) $('connect-box').prepend($('connect-open'));
     $('connect-btn').hidden = true;
     $('connect-box').hidden = false;
     poll(session.id, gen);
@@ -226,6 +240,7 @@
 
   if (cfg.connectPath) {
     $('connect-section').hidden = false;
+    if (phone) $('connect-hint').textContent = 'Amber, Primal or another NIP-46 signer app on this phone: open it with the button, approve the connection, then approve the login.';
     $('connect-btn').addEventListener('click', async () => {
       $('connect-btn').disabled = true;
       if (!await startConnect()) $('connect-btn').disabled = false;
@@ -241,7 +256,8 @@
   const statusLine = s => {
     if (s.status === 'WaitingForSigner') {
       const n = s.relays.filter(r => r.state === 'listening').length;
-      return `Waiting for your signer app to answer the QR code. Listening on ${n} relay${n === 1 ? '' : 's'}.`;
+      const how = phone ? 'Tap "Open signer app on this device", approve the connection, and come back here.' : 'Scan the QR code with your signer app and approve the connection.';
+      return `${how} Listening on ${n} relay${n === 1 ? '' : 's'}.`;
     }
     const via = s.signer ? ` via ${s.signer.via.replace(/^wss?:\/\//, '')}` : '';
     const req = s.request
@@ -303,12 +319,16 @@
     setTimeout(() => poll(id, gen), 1500);
   };
 
-  // Resume after a tab reload (see "remember" above). Placed after poll, which it calls.
+  // Resume after a tab reload (see "remember" above), or start at once on a phone (see "phone").
+  // Placed after poll, which show calls.
   if (cfg.connectPath) {
     const saved = recall();
     if (saved && saved.id) {
       $('connect-status').textContent = 'Checking your signer session…';
       show(saved, ++generation);
+    } else if (phone) {
+      $('connect-btn').hidden = true;
+      startConnect().then(ok => { if (ok === false) $('connect-btn').hidden = false; });
     }
   }
 
