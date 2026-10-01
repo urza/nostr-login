@@ -91,6 +91,12 @@ docker run -d --name nostr-guestbook -p 127.0.0.1:8080:8080 -v nostr-guestbook:/
 
 The login page compares the address in the browser with the address that the app knows. When they differ, it shows a notice with both addresses. That is the first thing to check when a login fails.
 
+### Logs
+
+The login page shows the same facts to the user: under the QR code, **Connection details** lists each relay with its state (listening, reconnecting, closed, unreachable, and whether it accepted or refused the last request), the signer and the relay it answered through, the request that waits for a reply with the number of copies sent, and the last events of the session. A tester can send a screenshot of it.
+
+The app writes to standard output, so `docker logs -f nostr-guestbook` shows them. The library's category `NostrAuth` is at `Debug` level by default: every QR-code login is one `Nostr Connect <id>` session, and the log has a line for each relay it uses, each request it sends (with copies), each reply, each relay complaint, and the outcome. A refused login POST logs the reason, the pubkey and the `u` tag. To make the log quieter, set `Logging__LogLevel__NostrAuth=Information` or `Warning`.
+
 ### Configuration
 
 All settings are environment variables. Lists use `__0`, `__1` and so on.
@@ -99,7 +105,7 @@ All settings are environment variables. Lists use `__0`, `__1` and so on.
 |---|---|---|
 | `Nostr__PublicOrigin` | request scheme and host | Public address, for example `https://guestbook.example.com`. Needed behind a proxy that changes the host or does not send `X-Forwarded-Proto`. |
 | `ASPNETCORE_FORWARDEDHEADERS_ENABLED` | `true` in the image, `false` with `dotnet run` | Reads `X-Forwarded-Proto` and `X-Forwarded-For`, so the app sees the public scheme and the real client IP (for rate limits). Set `false` when the container port is reachable directly, because the headers are trusted from any client. |
-| `Nostr__NostrConnectRelays__0`, `__1`, ... | `relay.primal.net`, `relay.nsec.app`, `theforest.nostr1.com`, `nostr.oxtr.dev`, `nostr.cypherpunk.today` | Relays for the QR-code login: the relays that signer apps use for NIP-46, not general-purpose relays. The QR code lists only the relays that the server could reach, in this order. |
+| `Nostr__NostrConnectRelays__0`, `__1`, ... | `relay.primal.net`, `nrs.primal.net`, `relay.nip46.com`, `bucket.coracle.social` | Relays for the QR-code login: dedicated NIP-46 relays that keep a request for a signer that subscribes late, not general-purpose relays. The QR code lists only the relays that the server could reach, in this order. |
 | `Nostr__ProfileRelays__0`, `__1`, ... | `purplepag.es`, `relay.primal.net`, `relay.damus.io`, `nos.lol` | Relays for names and pictures. |
 | `Guestbook__DataDirectory` | `/data` in Docker | Folder for the database and the cookie keys. |
 | `ASPNETCORE_HTTP_PORTS` | `8080` | Port inside the container. |
@@ -168,7 +174,7 @@ Main options of `AddNostr()`:
 |---|---|---|
 | `CallbackPath` | `/signin-nostr` | The login page (GET) and the login POST. |
 | `PublicOrigin` | request scheme and host | Set it behind a proxy. |
-| `NostrConnectRelays` | `relay.primal.net`, `relay.nsec.app`, `theforest.nostr1.com`, `nostr.oxtr.dev`, `nostr.cypherpunk.today` | Empty list turns the QR code option off. Use your own relay if you can. |
+| `NostrConnectRelays` | `relay.primal.net`, `nrs.primal.net`, `relay.nip46.com`, `bucket.coracle.social` | Empty list turns the QR code option off. Use your own relay if you can. |
 | `MaxNostrConnectSessions` | 100 | Active NIP-46 sessions per instance. |
 | `ProfileRelays` | `purplepag.es`, `relay.primal.net`, `relay.damus.io`, `nos.lol` | Empty list turns the profile lookup during login off. |
 | `AllowManualEvent` | `true` | The "Sign manually" box. |

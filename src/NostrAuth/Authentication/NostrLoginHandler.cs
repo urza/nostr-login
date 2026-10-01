@@ -84,9 +84,11 @@ public sealed class NostrLoginHandler(
         var (properties, challenge) = ReadState(Request.Query["state"]);
         if (properties is null || challenge is null)
         {
+            Logger.LogInformation("Nostr login page opened with an invalid or expired state by {Ip}", Context.Connection.RemoteIpAddress);
             await LoginPage.WriteErrorAsync(Context, "The login link is invalid or expired.", null);
             return;
         }
+        Logger.LogDebug("Nostr login page served to {Ip} for {Url}", Context.Connection.RemoteIpAddress, CallbackUrl);
         await LoginPage.WriteAsync(Context, Options.AppName, new
         {
             // url is the public URL for the u tag. path is where the form posts: relative, so the
@@ -119,6 +121,7 @@ public sealed class NostrLoginHandler(
             Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
             return;
         }
+        Logger.LogInformation("Nostr Connect {Id}: QR code shown to {Ip}", session.Id, Context.Connection.RemoteIpAddress);
 
         using var qr = new QRCodeGenerator().CreateQrCode(session.ConnectUri, QRCodeGenerator.ECCLevel.L);
         await Response.WriteAsJsonAsync(new { id = session.Id, uri = session.ConnectUri, qrSvg = new SvgQRCode(qr).GetGraphic(4) });
@@ -134,7 +137,22 @@ public sealed class NostrLoginHandler(
             return;
         }
         Response.Headers.CacheControl = "no-store";
-        await Response.WriteAsJsonAsync(new { status = s.Status.ToString(), authUrl = s.AuthUrl, @event = s.SignedEventJson, error = s.Error });
+        var now = time.GetUtcNow();
+        await Response.WriteAsJsonAsync(new
+        {
+            status = s.Status.ToString(),
+            authUrl = s.AuthUrl,
+            @event = s.SignedEventJson,
+            error = s.Error,
+            // "Connection details" on the page: the true state, so a stuck login explains itself.
+            signer = s.Signer is { } signer ? new { pubKey = signer.PubKey, via = signer.Via, clockOffset = signer.ClockOffset } : null,
+            userPubKey = s.UserPubKey,
+            request = s.Request is { } r ? new { method = r.Method, copies = r.Copies, sentAgo = (int)(now - r.LastSent).TotalSeconds } : null,
+            relays = s.RelayUrls.Select(url => s.Relays.TryGetValue(url, out var state)
+                ? new { url, state = state.State, detail = state.Detail }
+                : new { url, state = "unknown", detail = (string?)null }),
+            timeline = s.Timeline.Select(e => new { at = e.At.ToUnixTimeMilliseconds(), text = e.Text }),
+        });
     }
 
     private (AuthenticationProperties? Properties, string? Challenge) ReadState(string? state)
@@ -150,27 +168,32 @@ public sealed class NostrLoginHandler(
 
         var form = await Request.ReadFormAsync();
         var (properties, challenge) = ReadState(form["state"]);
-        if (properties is null || challenge is null) return HandleRequestResult.Fail("The login state is invalid or expired.");
-        if (!ValidateCorrelationId(properties)) return HandleRequestResult.Fail("Correlation failed. Start the login again in the same browser.", properties);
+        if (properties is null || challenge is null) return Reject("The login state is invalid or expired.");
+        if (!ValidateCorrelationId(properties)) return Reject("Correlation failed. Start the login again in the same browser.", properties);
 
         var proof = NostrEvent.TryParse(form["event"]);
-        if (proof is null) return HandleRequestResult.Fail("The signed event is missing or malformed.", properties);
+        if (proof is null) return Reject("The signed event is missing or malformed.", properties);
 
         var error = Nip98.Validate(proof, CallbackUrl, HttpMethods.Post, time.GetUtcNow(), Options.MaxEventAge, Options.MaxFutureSkew);
         // The challenge comes from our protected state, never from the browser, so the user cannot pick it.
         error ??= proof.GetTag("challenge") != challenge ? "Challenge does not match." : null;
         // Consume last: all cheap checks pass first, then the challenge is burnt exactly once.
         error ??= challenges.TryConsume(challenge) ? null : "Challenge is expired or already used.";
-        if (error is not null)
-        {
-            Logger.LogInformation("Nostr login rejected for {PubKey}: {Error}", proof.PubKey, error);
-            return HandleRequestResult.Fail(error, properties);
-        }
+        if (error is not null) return Reject(error, properties, proof);
 
+        Logger.LogInformation("Nostr login OK for {PubKey} with event {EventId} (created_at {CreatedAt}, u {Url})", proof.PubKey, proof.Id, proof.CreatedAt, CallbackUrl);
         var principal = await CreatePrincipalAsync(proof.PubKey);
         var context = new NostrCreatingTicketContext(Context, Scheme, Options, principal, properties, proof);
         await Events.CreatingTicket(context);
         return HandleRequestResult.Success(new AuthenticationTicket(context.Principal!, context.Properties, Scheme.Name));
+    }
+
+    private HandleRequestResult Reject(string error, AuthenticationProperties? properties = null, NostrEvent? proof = null)
+    {
+        // Every refused login leaves a line: "it does not log me in" reports come without details.
+        Logger.LogInformation("Nostr login rejected: {Error} (pubkey {PubKey}, event created_at {CreatedAt}, u tag '{UTag}', expected u {Url}, client {Ip})",
+            error, proof?.PubKey ?? "none", proof?.CreatedAt, proof?.GetTag("u") ?? "none", CallbackUrl, Context.Connection.RemoteIpAddress);
+        return HandleRequestResult.Fail(error, properties);
     }
 
     private async Task<ClaimsPrincipal> CreatePrincipalAsync(string pubKey)

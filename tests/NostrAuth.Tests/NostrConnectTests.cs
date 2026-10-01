@@ -161,6 +161,14 @@ public sealed class NostrConnectTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Redirect, (await browser.SubmitAsync(page, NostrEvent.TryParse(result.Event)!)).StatusCode);
         // The identity is the user key, not the signer's routing key.
         Assert.Equal(_user.PublicKeyHex, await (await browser.GetAsync("/me")).Content.ReadAsStringAsync());
+
+        // What the page shows under "Connection details".
+        Assert.Equal(_user.PublicKeyHex, result.UserPubKey);
+        Assert.Equal(signer.SignerKey.PublicKeyHex, result.Signer!.PubKey);
+        Assert.Equal(_relay, result.Signer.Via);
+        var relay = Assert.Single(result.Relays!);
+        Assert.Equal((_relay, "listening"), (relay.Url, relay.State));
+        Assert.Contains(result.Timeline!, e => e.Text.StartsWith("Signed by"));
     }
 
     [SkippableFact]
@@ -200,12 +208,34 @@ public sealed class NostrConnectTests : IAsyncLifetime
         await using var app = await TestApp.StartAsync(o => o.NostrConnectRelays = [_relay]);
         var (browser, page, session) = await ShowQrAsync(app);
 
-        // Amber subscribes with "since" = the phone's clock. A phone 5 s ahead of the server makes
-        // the relay drop every request whose created_at is older than that; later copies pass.
-        await using var signer = new FakeSigner(_user) { ClockSkew = TimeSpan.FromSeconds(5), SubscribeWithSince = true };
+        // Amber subscribes with "since" = the phone's clock. A phone a minute ahead of the server
+        // makes the relay drop every request with an older created_at. The server reads the
+        // signer's clock from the connect reply and dates its requests past it, so the login does
+        // not wait a minute (longer than this test allows) for the server's clock to catch up.
+        await using var signer = new FakeSigner(_user) { ClockSkew = TimeSpan.FromSeconds(60), SubscribeWithSince = true };
         await signer.ConnectAsync(session.Uri);
 
         Assert.Equal("Signed", (await WaitForResultAsync(browser, page, session.Id)).Status);
+    }
+
+    [SkippableFact]
+    public async Task Signer_that_sleeps_after_get_public_key_still_gets_sign_event()
+    {
+        Skip.If(Nak.Path is null, "nak is not installed");
+        await using var app = await TestApp.StartAsync(o => o.NostrConnectRelays = [_relay]);
+        var (browser, page, session) = await ShowQrAsync(app);
+
+        // Same phone for browser and signer: the user switches back to the browser right after the
+        // connection is approved, the signer app drops its relay connection, and sign_event (sent
+        // at once after the get_public_key reply) reaches nobody. The user then opens the signer
+        // app again and waits for a prompt.
+        await using var signer = new FakeSigner(_user) { SleepAfterGetPublicKey = TimeSpan.FromSeconds(2) };
+        await signer.ConnectAsync(session.Uri);
+
+        Assert.Equal("Signed", (await WaitForResultAsync(browser, page, session.Id)).Status);
+        // One sign_event prompt per copy would be the duplicate-prompt problem; the fake signer
+        // does not dedupe, so this also shows that the copies of sign_event are slow.
+        Assert.Equal(1, signer.Methods.Count(m => m == "sign_event"));
     }
 
     [SkippableFact]
@@ -263,7 +293,11 @@ public sealed class NostrConnectTests : IAsyncLifetime
     }
 
     private sealed record StartResponse(string Id, string Uri, string QrSvg);
-    private sealed record PollResponse(string Status, string? AuthUrl, string? Event, string? Error);
+    private sealed record PollResponse(string Status, string? AuthUrl, string? Event, string? Error,
+        SignerInfo? Signer, string? UserPubKey, RelayInfo[]? Relays, TimelineEntry[]? Timeline);
+    private sealed record SignerInfo(string PubKey, string Via, long ClockOffset);
+    private sealed record RelayInfo(string Url, string State, string? Detail);
+    private sealed record TimelineEntry(long At, string Text);
 
     public Task DisposeAsync()
     {

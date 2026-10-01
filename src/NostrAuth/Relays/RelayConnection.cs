@@ -115,16 +115,31 @@ public sealed class RelayConnection : IAsyncDisposable
         message is [{ ValueKind: JsonValueKind.String } type, { ValueKind: JsonValueKind.String } sub, ..]
         && type.GetString() == "EOSE" && sub.GetString() == subscriptionId;
 
-    /// <summary>True for <c>["OK", id, false, reason]</c>: the relay refused an event that we published.</summary>
-    public static bool IsRejectedOk(JsonElement[] message, out string reason)
+    /// <summary>Reads <c>["OK", id, accepted, reason]</c>: the relay's answer to an event that we published.</summary>
+    public static bool TryReadOk(JsonElement[] message, out string eventId, out bool accepted, out string reason)
     {
-        if (message is [{ ValueKind: JsonValueKind.String } type, _, { ValueKind: JsonValueKind.False }, .. var rest] && type.GetString() == "OK")
+        if (message is [{ ValueKind: JsonValueKind.String } type, { ValueKind: JsonValueKind.String } id, { ValueKind: JsonValueKind.True or JsonValueKind.False } ok, .. var rest]
+            && type.GetString() == "OK")
         {
+            eventId = id.GetString()!;
+            accepted = ok.ValueKind == JsonValueKind.True;
             reason = rest is [{ ValueKind: JsonValueKind.String } r, ..] ? r.GetString()! : "";
             return true;
         }
-        reason = "";
+        eventId = reason = "";
+        accepted = false;
         return false;
+    }
+
+    /// <summary>True for <c>["AUTH", challenge]</c>: the relay wants NIP-42 authentication.</summary>
+    public static bool IsAuth(JsonElement[] message) =>
+        message is [{ ValueKind: JsonValueKind.String } type, ..] && type.GetString() == "AUTH";
+
+    /// <summary>The message as JSON, cut to <paramref name="max"/> characters, for a log line.</summary>
+    public static string Describe(JsonElement[] message, int max = 200)
+    {
+        var text = JsonSerializer.Serialize(message);
+        return text.Length <= max ? text : text[..max] + "…";
     }
 
     /// <summary>True for <c>["CLOSED", subId, reason]</c>: the relay ended our subscription, for example "auth-required: ...".</summary>

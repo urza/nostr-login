@@ -30,6 +30,12 @@ internal sealed class FakeSigner(NostrKey user) : IAsyncDisposable
     /// <summary>Amber: the subscription filter has "since" = the phone's clock at subscribe time.</summary>
     public bool SubscribeWithSince { get; init; }
 
+    /// <summary>
+    /// A signer app on the same phone as the browser: right after it answers get_public_key the user
+    /// switches back to the browser, the app loses its relay connection, and it is back this much later.
+    /// </summary>
+    public TimeSpan SleepAfterGetPublicKey { get; init; }
+
     public List<string> Methods { get; } = [];
 
     /// <summary>What the user does: scan the QR code and approve.</summary>
@@ -78,6 +84,12 @@ internal sealed class FakeSigner(NostrKey user) : IAsyncDisposable
                     _ => new { id, result = "", error = "not supported" },
                 };
                 await SendAsync(clientPubKey, key, reply);
+                if (method == "get_public_key" && SleepAfterGetPublicKey != TimeSpan.Zero)
+                {
+                    await _relay.SendAsync(["CLOSE", "s"], _cts.Token);
+                    await Task.Delay(SleepAfterGetPublicKey, _cts.Token);
+                    await SubscribeAsync();
+                }
             }
         }
         catch (OperationCanceledException)

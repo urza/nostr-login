@@ -48,6 +48,14 @@
   .binding { font-size: .8rem; color: var(--muted); margin-top: 1rem; }
   .binding strong { overflow-wrap: anywhere; }
   summary { cursor: pointer; font-weight: 600; }
+  .details { font-size: .8rem; color: var(--muted); }
+  .details summary { font-size: .85rem; }
+  .plain { list-style: none; margin: .5rem 0 0; padding: 0; }
+  .plain li { padding: .15rem 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+  .plain li:first-child { border-top: 0; }
+  .plain time { color: var(--text); font-variant-numeric: tabular-nums; margin-right: .4rem; }
+  .plain .ok { color: var(--accent); }
+  .plain .bad { color: var(--error); }
   a { color: var(--accent); }
   [hidden] { display: none !important; }
 </style>
@@ -80,6 +88,11 @@
         </div>
         <p class="status" id="connect-status" aria-live="polite"></p>
         <p class="status" id="connect-auth" hidden>Your signer asks for approval: <a id="connect-auth-link" target="_blank" rel="noopener noreferrer">open it here</a>.</p>
+        <details class="details" id="connect-details" open>
+          <summary>Connection details</summary>
+          <ul id="connect-relays" class="plain"></ul>
+          <ol id="connect-log" class="plain"></ol>
+        </details>
       </div>
     </section>
 
@@ -221,10 +234,43 @@
     $('connect-copy').addEventListener('click', () => navigator.clipboard.writeText(connectUri));
   }
 
-  const statusText = {
-    WaitingForSigner: 'Waiting for your signer app to connect…',
-    WaitingForSignature: 'Connected. Approve the login in your signer app…',
+  // The true state, from the server: which relays listen, which request waits for a reply and
+  // how often it went out, and what happened so far. A login that stops half-way is then
+  // diagnosed from the phone, without the server log.
+  const short = key => key && key.length > 12 ? key.slice(0, 8) + '…' + key.slice(-4) : key;
+  const statusLine = s => {
+    if (s.status === 'WaitingForSigner') {
+      const n = s.relays.filter(r => r.state === 'listening').length;
+      return `Waiting for your signer app to answer the QR code. Listening on ${n} relay${n === 1 ? '' : 's'}.`;
+    }
+    const via = s.signer ? ` via ${s.signer.via.replace(/^wss?:\/\//, '')}` : '';
+    const req = s.request
+      ? ` Waiting for the reply to ${s.request.method}: sent ${s.request.copies + 1} time${s.request.copies ? 's' : ''}, last ${s.request.sentAgo} s ago.`
+      : '';
+    const hint = s.request && s.request.method === 'sign_event'
+      ? ' Approve the login in your signer app. If it shows nothing, keep it open for a few seconds.'
+      : ' If this does not change, the signer app does not receive our requests on these relays.';
+    return `Signer connected${via}.${req}${hint}`;
   };
+  const li = (parent, text, cls) => { const el = document.createElement('li'); if (cls) el.className = cls; el.textContent = text; parent.appendChild(el); return el; };
+  const renderDetails = s => {
+    const relays = $('connect-relays');
+    relays.replaceChildren();
+    for (const r of s.relays) {
+      const cls = r.state === 'listening' ? (r.detail && r.detail.startsWith('refused') ? 'bad' : 'ok') : r.state === 'connected' ? '' : 'bad';
+      li(relays, `${r.url.replace(/^wss?:\/\//, '')}: ${r.state}${r.detail ? ' (' + r.detail + ')' : ''}`, cls);
+    }
+    if (s.userPubKey) li(relays, `Your key: ${short(s.userPubKey)}`);
+    const log = $('connect-log');
+    log.replaceChildren();
+    for (const e of s.timeline) {
+      const item = li(log, e.text);
+      const t = document.createElement('time');
+      t.textContent = new Date(e.at).toLocaleTimeString([], { hour12: false });
+      item.prepend(t);
+    }
+  };
+
   const poll = async (id, gen) => {
     if (gen !== generation) return;
     let s;
@@ -234,10 +280,12 @@
       s = await res.json();
     } catch {
       // Phones pause background tabs while the signer app is open. Try again on the next tick.
+      $('connect-status').textContent = 'This page cannot reach the server right now. Trying again…';
       setTimeout(() => poll(id, gen), 1500);
       return;
     }
     if (gen !== generation) return;
+    renderDetails(s);
     if (s.status === 'Signed') { forget(); $('connect-status').textContent = 'Signed. Logging in…'; submit(s.event); return; }
     if (s.status === 'Failed') {
       forget();
@@ -245,7 +293,7 @@
       showError((s.error || 'Nostr Connect failed.') + ' Use "New QR code" to try again.');
       return;
     }
-    $('connect-status').textContent = statusText[s.status] || s.status;
+    $('connect-status').textContent = statusLine(s);
     if (s.authUrl && /^https:\/\//i.test(s.authUrl)) {
       $('connect-auth-link').href = s.authUrl;
       $('connect-auth').hidden = false;
