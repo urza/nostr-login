@@ -13,7 +13,8 @@ ARG GIT_SHA=
 WORKDIR /src
 
 # Project files first: the restore layer stays cached while only source code changes.
-COPY src/NostrAuth/NostrAuth.csproj src/NostrAuth/
+# The lock file goes in with the project file, so the restore uses the pinned package build.
+COPY src/NostrAuth/NostrAuth.csproj src/NostrAuth/packages.lock.json src/NostrAuth/
 COPY app/NostrGuestbook/NostrGuestbook.csproj app/NostrGuestbook/
 RUN dotnet restore app/NostrGuestbook/NostrGuestbook.csproj -a $TARGETARCH
 
