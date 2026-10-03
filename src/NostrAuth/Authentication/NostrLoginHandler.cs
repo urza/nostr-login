@@ -6,7 +6,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NostrAuth.NostrConnect;
 using NostrAuth.Relays;
-using QRCoder;
 
 namespace NostrAuth.Authentication;
 
@@ -123,8 +122,7 @@ public sealed class NostrLoginHandler(
         }
         Logger.LogInformation("Nostr Connect {Id}: QR code shown to {Ip}", session.Id, Context.Connection.RemoteIpAddress);
 
-        using var qr = new QRCodeGenerator().CreateQrCode(session.ConnectUri, QRCodeGenerator.ECCLevel.L);
-        await Response.WriteAsJsonAsync(new { id = session.Id, uri = session.ConnectUri, qrSvg = new SvgQRCode(qr).GetGraphic(4) });
+        await Response.WriteAsJsonAsync(new { id = session.Id, uri = session.ConnectUri, qrSvg = QrCode.Encode(session.ConnectUri).ToSvg() });
     }
 
     private async Task PollNostrConnectAsync(string id)

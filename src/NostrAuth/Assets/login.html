@@ -207,7 +207,7 @@
   const recall = () => { try { return JSON.parse(sessionStorage.getItem(storeKey)); } catch { return null; } };
 
   const show = (session, gen) => {
-    // The SVG comes from our own server (QRCoder), not from user input.
+    // The SVG comes from our own server (QrCode.cs), not from user input.
     $('connect-qr').innerHTML = session.qrSvg;
     $('connect-open').href = connectUri = session.uri;
     $('connect-qr-details').open = !phone;

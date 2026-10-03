@@ -5,14 +5,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <Description>Log in to ASP.NET Core apps with a Nostr key (NIP-07, NIP-46, NIP-98).</Description>
+    <!-- packages.lock.json pins the exact package build, so a restore cannot resolve a different one. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <!-- The only package. secp256k1 with BIP-340 Schnorr is not in .NET, and elliptic-curve code
+         is the one piece that should not be hand-written here. ChaCha20 (NIP-44) and the QR code
+         encoder are in this project, so there is nothing else to trust. -->
     <PackageReference Include="NBitcoin.Secp256k1" Version="4.0.1" />
-    <!-- NIP-44 needs raw ChaCha20. .NET has only the ChaCha20-Poly1305 AEAD. -->
-    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
-    <PackageReference Include="QRCoder" Version="1.8.0" />
   </ItemGroup>
 
   <ItemGroup>

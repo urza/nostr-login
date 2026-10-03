@@ -146,8 +146,9 @@ No public, maintained Nostr-to-OIDC bridge was found in this research.
 
 | Need | Package | Notes |
 |---|---|---|
-| BIP-340 Schnorr verify, ECDH | [NBitcoin.Secp256k1](https://www.nuget.org/packages/NBitcoin.Secp256k1) 4.x | Pure C#, maintained by the BTCPay/NBitcoin team. |
-| ChaCha20 (NIP-44) | [BouncyCastle.Cryptography](https://www.nuget.org/packages/BouncyCastle.Cryptography) 2.x | .NET has only ChaCha20-Poly1305. NIP-44 needs raw ChaCha20. |
+| BIP-340 Schnorr verify, ECDH | [NBitcoin.Secp256k1](https://www.nuget.org/packages/NBitcoin.Secp256k1) 4.x | Pure C#, maintained by the BTCPay/NBitcoin team. The only package the library uses. |
+| ChaCha20 (NIP-44) | `src/NostrAuth/ChaCha20.cs` | .NET has only ChaCha20-Poly1305. NIP-44 needs raw ChaCha20. RFC 8439 is 60 lines of code with no secret-dependent branches, so it is in the library. Tested against the RFC and NIP-44 vectors. BouncyCastle (5 MB) did this until 2026-10-03. |
+| QR code for NIP-46 | `src/NostrAuth/QrCode.cs` | Byte mode, versions 1 to 40. QRCoder did this until 2026-10-03, and pulled in System.Drawing.Common. Tests decode every version with ZXing.Net (test project only). |
 | HKDF, SHA-256, HMAC | `System.Security.Cryptography` | Built in. |
 | Relay WebSocket | `System.Net.WebSockets.ClientWebSocket` | Built in. |
 | Full Nostr clients | [NNostr.Client](https://www.nuget.org/packages/NNostr.Client) 0.0.55, [Nostr.Client](https://www.nuget.org/packages/Nostr.Client) 2.1.0 | Useful for a full Nostr app. Too much for a login. |

@@ -147,6 +147,8 @@ builder.Services.AddAuthentication(o =>
 
 `AddNostr()` is a normal remote authentication scheme. The login page comes with it (`/signin-nostr`). With ASP.NET Core Identity, Nostr appears as an external login with no extra code (see [Demo.IdentityLink](samples/Demo.IdentityLink)).
 
+The library depends on one package, [NBitcoin.Secp256k1](https://www.nuget.org/packages/NBitcoin.Secp256k1), for BIP-340 signatures and ECDH. ChaCha20 for NIP-44 and the QR code encoder are part of the library, so there is no other code to trust.
+
 Claims after login:
 
 | Claim | Value |

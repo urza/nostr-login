@@ -1,8 +1,6 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
-using Org.BouncyCastle.Crypto.Engines;
-using Org.BouncyCastle.Crypto.Parameters;
 
 namespace NostrAuth;
 
@@ -21,7 +19,7 @@ public static class Nip44
     internal static string Encrypt(string plaintext, byte[] conversationKey, byte[] nonce)
     {
         var (chachaKey, chachaNonce, hmacKey) = MessageKeys(conversationKey, nonce);
-        var ciphertext = ChaCha20(chachaKey, chachaNonce, Pad(plaintext));
+        var ciphertext = ChaCha20.Process(chachaKey, chachaNonce, Pad(plaintext));
         var mac = HMACSHA256.HashData(hmacKey, (byte[])[.. nonce, .. ciphertext]);
         return Convert.ToBase64String([Version, .. nonce, .. ciphertext, .. mac]);
     }
@@ -41,7 +39,7 @@ public static class Nip44
         if (!CryptographicOperations.FixedTimeEquals(mac, HMACSHA256.HashData(hmacKey, (byte[])[.. nonce, .. ciphertext])))
             throw new CryptographicException("Invalid MAC.");
 
-        return Unpad(ChaCha20(chachaKey, chachaNonce, ciphertext));
+        return Unpad(ChaCha20.Process(chachaKey, chachaNonce, ciphertext));
     }
 
     private static (byte[] Key, byte[] Nonce, byte[] HmacKey) MessageKeys(byte[] conversationKey, byte[] nonce)
@@ -49,16 +47,6 @@ public static class Nip44
         if (conversationKey.Length != 32 || nonce.Length != 32) throw new ArgumentException("Key and nonce must be 32 bytes.");
         var keys = HKDF.Expand(HashAlgorithmName.SHA256, conversationKey, 76, nonce);
         return (keys[..32], keys[32..44], keys[44..76]);
-    }
-
-    private static byte[] ChaCha20(byte[] key, byte[] nonce, byte[] input)
-    {
-        // RFC 7539 variant: 12-byte nonce, counter starts at 0.
-        var engine = new ChaCha7539Engine();
-        engine.Init(true, new ParametersWithIV(new KeyParameter(key), nonce));
-        var output = new byte[input.Length];
-        engine.ProcessBytes(input, 0, input.Length, output, 0);
-        return output;
     }
 
     internal static int CalcPaddedLength(int unpaddedLength)
