@@ -5,7 +5,7 @@
 # The SDK stage runs on the build machine's own platform and cross-compiles with -a. This is much
 # faster than emulating arm64 under QEMU, and the app is managed code apart from SQLite, whose
 # native library comes from the NuGet runtime pack for the target architecture.
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.403 AS build
 ARG TARGETARCH
 # Commit SHA for the version in the footer. .dockerignore leaves out .git, so it comes from
 # outside: the GitHub workflow passes github.sha. Without it the app shows "development build".
@@ -24,7 +24,7 @@ RUN dotnet publish app/NostrGuestbook/NostrGuestbook.csproj -c Release -a $TARGE
     -p:SourceRevisionId=$GIT_SHA
 RUN mkdir /data
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.14
 WORKDIR /app
 
 # Database and Data Protection keys. Mount a volume here, or messages and logins are lost
