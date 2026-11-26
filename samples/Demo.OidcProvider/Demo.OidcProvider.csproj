@@ -5,13 +5,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.12" />
-    <PackageReference Include="OpenIddict.AspNetCore" Version="7.7.1" />
-    <PackageReference Include="OpenIddict.EntityFrameworkCore" Version="7.7.1" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="11.0.0" />
+    <PackageReference Include="OpenIddict.AspNetCore" Version="7.9.0" />
+    <PackageReference Include="OpenIddict.EntityFrameworkCore" Version="7.9.0" />
   </ItemGroup>
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>

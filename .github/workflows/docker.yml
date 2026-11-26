@@ -17,13 +17,13 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: 11.0.x
       # nak runs a local relay and a NIP-46 signer for the end-to-end tests. Without it,
       # those tests are skipped, not failed.
       - name: Install nak
         run: |
           mkdir -p ~/.local/bin
-          curl -sSL -o ~/.local/bin/nak https://github.com/fiatjaf/nak/releases/download/v0.20.7/nak-v0.20.7-linux-amd64
+          curl -sSL -o ~/.local/bin/nak https://github.com/fiatjaf/nak/releases/download/v0.22.3/nak-v0.22.3-linux-amd64
           chmod +x ~/.local/bin/nak
       - run: dotnet test tests/NostrAuth.Tests
 
@@ -55,6 +55,7 @@ jobs:
       - uses: docker/build-push-action@v7
         with:
           context: .
+          pull: true
           # No QEMU needed: the Dockerfile cross-compiles in an SDK stage on the runner's platform.
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
